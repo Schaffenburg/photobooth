@@ -6,7 +6,7 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('Gst', '1.0')
 gi.require_version('GstVideo', '1.0')
 gi.require_version('GdkX11', '3.0')
-from gi.repository import Gst, GObject, Gtk, GdkX11, GstVideo
+from gi.repository import Gst, GObject, Gtk, GdkX11, Gdk, GstVideo
 
 class GTK_Main:
 	def __init__(self):
@@ -14,10 +14,14 @@ class GTK_Main:
 		window.set_title("Live Video Preview")
 		window.set_default_size(1024, 830)
 		window.connect("destroy", Gtk.main_quit, "WM destroy")
+		Gtk.Window.fullscreen(window)
 		vbox = Gtk.VBox()
 		window.add(vbox)
 		self.movie_window = Gtk.DrawingArea()
+		self.movie_window.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+		self.movie_window.connect("button-press-event", self.snapshot)
 		vbox.add(self.movie_window)
+
 		hbox = Gtk.HBox()
 		vbox.pack_start(hbox, False, False, 0)
 		hbox.set_border_width(10)
@@ -80,6 +84,10 @@ class GTK_Main:
 		else:
 			self.player.set_state(Gst.State.NULL)
 			self.button.set_label("Start")
+
+	def snapshot(self, widget, event):
+		if event.button == 1:
+			print "TAKE SNAPSHOT!"
 			
 	def exit(self, widget, data=None):
 		Gtk.main_quit()
