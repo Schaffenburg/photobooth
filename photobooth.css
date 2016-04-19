@@ -1,0 +1,8 @@
+.snapshot_label {
+/*     background-color: rgba (100, 100, 0, 0); */
+    background: rgba (50, 100, 10, 50);
+    color: white;
+    font-weight: bold;
+    font-size: 60px;
+    padding: 0 20px 0 20px; 
+}
