@@ -10,7 +10,7 @@ from gi.repository import Gst, GObject, Gtk, GdkX11, Gdk, GstVideo
 
 COUNTDOWN_SECONDS   = 4
 AUDIOFILE_COUNTDOWN = "beep.m4a"
-AUDIOFILE_SHUTTER   = "shutter.mp3"
+AUDIOFILE_SHUTTER   = "shutter.m4a"
 
 
 class GTK_Main:
@@ -99,9 +99,10 @@ class GTK_Main:
 		bus.enable_sync_message_emission()
 		bus.connect("message", self.on_message)
 		bus.connect("sync-message::element", self.on_sync_message)
-
+	
 		self.countdown_timer = None
 		self.soundplayer = Gst.Pipeline.new("soundplayer")
+		self.audioplaybin = Gst.ElementFactory.make("playbin", "soundfile")
 
 	def start_stop(self, w):
 		if self.button_play.get_label() == "Start":
@@ -120,10 +121,9 @@ class GTK_Main:
 			self.snapshot_label.set_halign(Gtk.Align.CENTER)
 			self.snapshot_label.set_size_request(500, 300)
 			self.snapshot_label.get_style_context().add_class("snapshot_label")
-			self.audiplaybin = Gst.ElementFactory.make("playbin", "soundfile")
 			uri = 'file://'+os.path.abspath(AUDIOFILE_COUNTDOWN)
-			self.audiplaybin.set_property('uri',uri)
-			self.soundplayer.add(self.audiplaybin)
+			self.audioplaybin.set_property('uri',uri)
+			self.soundplayer.add(self.audioplaybin)
 			self.soundplayer.set_state(Gst.State.PLAYING)
 			self.overlay.add_overlay(self.snapshot_label)
 			self.overlay.show_all()
@@ -142,7 +142,7 @@ class GTK_Main:
 		self.countdown_timer = None
 		self.soundplayer.set_state(Gst.State.READY)
 		uri = 'file://'+os.path.abspath(AUDIOFILE_SHUTTER)
-		self.audiplaybin.set_property('uri',uri)
+		self.audioplaybin.set_property('uri',uri)
 		self.soundplayer.set_state(Gst.State.PLAYING)
 		self.overlay.remove(self.snapshot_label)
 
