@@ -16,13 +16,15 @@
 #ifndef __PHOTO_BOOTH_H__
 #define __PHOTO_BOOTH_H__
 
-
 #include <glib-unix.h>
 #include <glib-object.h>
+#include <gtk/gtk.h>
 #include <gst/gst.h>
 #include <gphoto2/gphoto2.h>
+#include <gphoto2/gphoto2-camera.h>
 
 #define CONTROL_RUN            'R'     /* start movie capture */
+#define CONTROL_PAUSE          'P'     /* pause movie capture */
 #define CONTROL_STOP           'S'     /* stop movie capture */
 #define CONTROL_SOCKETS(src)   src->control_sock
 #define WRITE_SOCKET(src)      src->control_sock[1]
@@ -47,56 +49,98 @@ G_STMT_START {                                 \
 
 G_BEGIN_DECLS
 
-#define PREVIEW_FPS 25
+#define PREVIEW_FPS 24
 
 struct _CameraInfo {
 	Camera *camera;
 	GPContext *context;
+	GMutex mutex;
+	int preview_capture_count;
 };
 
 typedef enum
 {
 	CAPTURETHREAD_NONE = 0,
+	CAPTURETHREAD_STOP,
+	CAPTURETHREAD_PAUSED,
 	CAPTURETHREAD_RUN,
-	CAPTURETHREAD_STOP
 } PhotoboothReadthreadState;
+
+typedef enum
+{
+	PB_STATE_NONE = 0,
+	PB_STATE_PREVIEW,
+	PB_STATE_TAKING_PHOTO,
+	PB_STATE_ASKING,
+	PB_STATE_PRINTING
+} PhotoboothState;
 
 #define PHOTO_BOOTH_TYPE                (photo_booth_get_type ())
 #define PHOTO_BOOTH(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),PHOTO_BOOTH_TYPE,PhotoBooth))
 #define PHOTO_BOOTH_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass), PHOTO_BOOTH_TYPE,PhotoBoothClass))
 #define IS_PHOTO_BOOTH(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj),PHOTO_BOOTH_TYPE))
-#define IS_PHOTO_BOOTH_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), PHOTO_BOOTH_TYPE)) 
+#define IS_PHOTO_BOOTH_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), PHOTO_BOOTH_TYPE))
 
-typedef struct _PhotoBooth        PhotoBooth;
-typedef struct _PhotoBoothClass   PhotoBoothClass;
+typedef struct _PhotoBooth              PhotoBooth;
+typedef struct _PhotoBoothClass         PhotoBoothClass;
 
-typedef struct _CameraInfo        CameraInfo;
+typedef struct _CameraInfo              CameraInfo;
 
 struct _PhotoBooth
 {
+	GtkApplication parent;
 	GMainLoop *loop;
+
 	GstElement *pipeline;
-	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_convert;
-	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter;
 	GstElement *pixoverlay, *video_sink;
+	GstElement *video_bin;
+	GstElement *photo_bin;
+
 	int video_fd;
 	gint timeout_id;
-	GPid pid;
-	GtkWidget *window, *overlay;
+	GtkWidget *overlay;
 	GtkWidget *drawing_area, *text;
 	GdkRectangle monitor_geo;
-	CameraInfo cam_info;
-	
+	CameraInfo *cam_info;
+
+	gulong video_block_id;
+	gulong photo_block_id;
+
 	int control_sock[2];
 	GThread *video_capture_thread;
+	PhotoboothState state;
 };
 
 struct _PhotoBoothClass
 {
-	GObjectClass parent_class;
+	GtkApplicationClass parent_class;
 };
 
-GType photo_booth_get_type (void);
+GType   photo_booth_get_type    (void);
+
+
+#define PHOTO_BOOTH_WINDOW_TYPE                (photo_booth_window_get_type ())
+#define PHOTO_BOOTH_WINDOW(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),PHOTO_BOOTH_WINDOW_TYPE,PhotoBoothWindow))
+#define PHOTO_BOOTH_WINDOW_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass), PHOTO_BOOTH_WINDOW_TYPE,PhotoBoothWindowClass))
+#define IS_PHOTO_BOOTH_WINDOW(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj),PHOTO_BOOTH_WINDOW_TYPE))
+#define IS_PHOTO_BOOTH_WINDOW_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), PHOTO_BOOTH_WINDOW_TYPE))
+
+typedef struct _PhotoBoothWindow               PhotoBoothWindow;
+typedef struct _PhotoBoothWindowClass          PhotoBoothWindowClass;
+
+struct _PhotoBoothWindow
+{
+	GtkApplicationWindow parent;
+};
+
+struct _PhotoBoothWindowClass
+{
+	GtkApplicationWindowClass parent_class;
+};
+
+GType                   photo_booth_window_get_type     (void);
+PhotoBoothWindow       *photo_booth_window_new          (PhotoBooth *pb);
+void                    photo_booth_window_open         (PhotoBoothWindow *win, GFile *file);
 
 G_END_DECLS
 
