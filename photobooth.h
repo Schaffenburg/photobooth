@@ -98,16 +98,13 @@ struct _PhotoBooth
 
 	int video_fd;
 	gint timeout_id;
-	GtkWidget *overlay;
-	GtkWidget *drawing_area, *text;
-	GdkRectangle monitor_geo;
 	CameraInfo *cam_info;
 
 	gulong video_block_id;
 	gulong photo_block_id;
 
 	int control_sock[2];
-	GThread *video_capture_thread;
+	GThread *capture_thread;
 	PhotoboothState state;
 };
 
@@ -117,30 +114,6 @@ struct _PhotoBoothClass
 };
 
 GType   photo_booth_get_type    (void);
-
-
-#define PHOTO_BOOTH_WINDOW_TYPE                (photo_booth_window_get_type ())
-#define PHOTO_BOOTH_WINDOW(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),PHOTO_BOOTH_WINDOW_TYPE,PhotoBoothWindow))
-#define PHOTO_BOOTH_WINDOW_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass), PHOTO_BOOTH_WINDOW_TYPE,PhotoBoothWindowClass))
-#define IS_PHOTO_BOOTH_WINDOW(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj),PHOTO_BOOTH_WINDOW_TYPE))
-#define IS_PHOTO_BOOTH_WINDOW_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), PHOTO_BOOTH_WINDOW_TYPE))
-
-typedef struct _PhotoBoothWindow               PhotoBoothWindow;
-typedef struct _PhotoBoothWindowClass          PhotoBoothWindowClass;
-
-struct _PhotoBoothWindow
-{
-	GtkApplicationWindow parent;
-};
-
-struct _PhotoBoothWindowClass
-{
-	GtkApplicationWindowClass parent_class;
-};
-
-GType                   photo_booth_window_get_type     (void);
-PhotoBoothWindow       *photo_booth_window_new          (PhotoBooth *pb);
-void                    photo_booth_window_open         (PhotoBoothWindow *win, GFile *file);
 
 G_END_DECLS
 
