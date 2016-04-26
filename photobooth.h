@@ -93,12 +93,11 @@ typedef struct _CameraInfo              CameraInfo;
 struct _PhotoBooth
 {
 	GtkApplication parent;
-	GMainLoop *loop;
 
 	GstElement *pipeline;
-	GstElement *pixoverlay, *video_sink;
 	GstElement *video_bin;
 	GstElement *photo_bin;
+	GstElement *pixoverlay, *video_sink;
 
 	int video_fd;
 	gint timeout_id;

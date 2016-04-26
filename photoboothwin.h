@@ -43,8 +43,9 @@ struct _PhotoBoothWindowClass
 GType                   photo_booth_window_get_type         (void);
 PhotoBoothWindow       *photo_booth_window_new              (PhotoBooth *pb);
 void                    photo_booth_window_setup            (PhotoBoothWindow *win, GdkRectangle *monitor_geo);
-GtkWidget              *photo_booth_window_get_drawing_area (PhotoBoothWindow *win);
+void                    photo_booth_window_add_drawing_area (PhotoBoothWindow *win, GtkWidget *drawing_area);
 void                    photo_booth_window_set_spinner      (PhotoBoothWindow *win, gboolean active);
+void                    photo_booth_window_start_countdown  (PhotoBoothWindow *win, gint count);
 
 G_END_DECLS
 

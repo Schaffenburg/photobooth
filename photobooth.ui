@@ -11,10 +11,26 @@
       <object class="GtkOverlay" id="overlay">
         <property name="visible">True</property>
         <property name="can_focus">False</property>
-        <child>
-          <object class="GtkDrawingArea" id="drawing_area">
-            <property name="visible">True</property>
+        <child type="overlay">
+          <object class="GtkLabel" id="countdown_label">
+            <property name="width_request">400</property>
+            <property name="height_request">300</property>
+            <property name="visible">False</property>
             <property name="can_focus">False</property>
+            <property name="opacity">0.9</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="label" translatable="yes">label</property>
+            <property name="justify">center</property>
+            <property name="angle">20</property>
+            <property name="track_visited_links">False</property>
+            <attributes>
+              <attribute name="weight" value="ultraheavy"/>
+            </attributes>
+            <style>
+              <class name="transparentbg"/>
+              <class name="countdown_label"/>
+            </style>
           </object>
           <packing>
             <property name="index">-1</property>
@@ -22,22 +38,27 @@
         </child>
         <child type="overlay">
           <object class="GtkSpinner" id="spinner">
-            <property name="width_request">100</property>
-            <property name="height_request">100</property>
+            <property name="width_request">200</property>
+            <property name="height_request">200</property>
             <property name="visible">True</property>
             <property name="can_focus">False</property>
-            <property name="opacity">0.5</property>
+            <property name="opacity">0.8</property>
             <property name="halign">center</property>
             <property name="valign">center</property>
+            <property name="hexpand">True</property>
+            <property name="vexpand">True</property>
             <property name="active">True</property>
             <style>
-              <class name="spinner"/>
+              <class name="transparentbg"/>
             </style>
           </object>
           <packing>
             <property name="index">1</property>
           </packing>
         </child>
+        <style>
+          <class name="transparentbg"/>
+        </style>
       </object>
     </child>
   </template>

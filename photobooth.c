@@ -1,5 +1,5 @@
 /*
- * GStreamer photobooth.c
+ * photobooth.c
  * Copyright 2016 Andreas Frisch <fraxinas@opendreambox.org>
  *
  * This program is licensed under the Creative Commons
@@ -54,11 +54,12 @@ static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, Photo
 static GdkRectangle photo_boot_monitor_geo (PhotoBooth *pb);
 
 /* general private functions */
-static void photo_booth_quit_signal (GMainLoop *loop);
-static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, GMainLoop *loop);
+static void photo_booth_quit_signal (PhotoBooth *pb);
+static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb);
 static void photo_booth_setup_window (PhotoBooth *pb);
 static void photo_booth_preview (PhotoBooth *pb);
-static void photo_booth_snapshot (PhotoBooth *pb);
+static void photo_booth_snapshot_start (PhotoBooth *pb);
+static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
 
 /* libgphoto2 */
@@ -70,7 +71,6 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb);
 
 /* gstreamer functions */
 static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb);
-static GstBusSyncReply photo_booth_bus_sync_callback (GstBus *bus, GstMessage *message, PhotoBoothPrivate *priv);
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb);
 
 static void photo_booth_class_init (PhotoBoothClass *klass)
@@ -103,6 +103,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	if (!photo_booth_cam_init (&pb->cam_info))
 		GST_ERROR_OBJECT (pb, "can't init cam!");
 
+	pb->pipeline = NULL;
 	pb->state = PB_STATE_NONE;
 	pb->video_block_id = 0;
 	pb->photo_block_id = 0;
@@ -119,9 +120,7 @@ static void photo_booth_setup_window (PhotoBooth *pb)
 	gtk_window_present (GTK_WINDOW (priv->win));
 	photo_booth_window_setup (priv->win, &priv->monitor_geo);
 	GST_INFO_OBJECT (priv->win, "monitor geometry %dx%d", photo_boot_monitor_geo(pb).width, photo_boot_monitor_geo(pb).height);
-	GtkWidget *drawing_area = photo_booth_window_get_drawing_area (priv->win);
-	g_signal_connect (G_OBJECT (priv->win), "destroy", G_CALLBACK (photo_booth_window_destroyed_signal), pb->loop);
-	g_signal_connect (G_OBJECT (drawing_area), "button-press-event", G_CALLBACK (photo_booth_clicked), pb);
+	g_signal_connect (G_OBJECT (priv->win), "destroy", G_CALLBACK (photo_booth_window_destroyed_signal), pb);
 	photo_booth_setup_gstreamer (pb);
 }
 
@@ -140,7 +139,7 @@ static void photo_booth_open (GApplication  *app, GFile **files, gint n_files, c
 static void photo_booth_finalize (GObject *object)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (object);
-	GST_INFO_OBJECT (pb, "finalize server");
+	GST_INFO_OBJECT (pb, "finalize");
 	SEND_COMMAND (pb, CONTROL_STOP);
 	photo_booth_flush_pipe (pb->video_fd);
 	g_thread_join (pb->capture_thread);
@@ -224,16 +223,16 @@ static void photo_booth_flush_pipe (int fd)
 		rlen = read (fd, buf, sizeof(buf));
 }
 
-static void photo_booth_quit_signal (GMainLoop *loop)
+static void photo_booth_quit_signal (PhotoBooth *pb)
 {
-	GST_INFO_OBJECT (loop, "caught SIGINT");
-	g_main_loop_quit (loop);
+	GST_INFO_OBJECT (pb, "caught SIGINT! exit...");
+	g_application_quit (G_APPLICATION (pb));
 }
 
-static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, GMainLoop *loop)
+static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb)
 {
-	GST_INFO_OBJECT (win, "window destroyed");
-	g_main_loop_quit (loop);
+	GST_INFO_OBJECT (pb, "main window closed! exit...");
+	g_application_quit (G_APPLICATION (pb));
 }
 
 static void photo_booth_capture_thread_func (PhotoBooth *pb)
@@ -284,7 +283,6 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		}
 		else if (ret == 0 && state == CAPTURE_VIDEO)
 		{
-			GST_DEBUG_OBJECT (pb, "STATE == CAPTURE_VIDEO");
 			const char *mime;
 			if (pb->cam_info)
 			{
@@ -306,13 +304,12 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 						continue;
 					}
 					captured_frames++;
-					GST_DEBUG_OBJECT (pb, "captured frame (%d frames total)", captured_frames);
+					GST_LOG_OBJECT (pb, "captured frame (%d frames total)", captured_frames);
 				}
 			}
 		}
 		else if (ret == 0 && state == CAPTURE_PHOTO)
 		{
-			GST_DEBUG_OBJECT (pb, "STATE == CAPTURE_PHOTO");
 			if (pb->cam_info)
 			{
 				ret = photo_booth_take_photo (pb->cam_info);
@@ -463,7 +460,12 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 
 static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv;
 	GstBus *bus;
+	GstElement *video_convert;
+	GtkWidget *drawing_area;
+
+	priv = photo_booth_get_instance_private (pb);
 
 	pb->video_bin = build_video_bin (pb);
 	pb->photo_bin = build_photo_bin (pb);
@@ -475,57 +477,41 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	g_object_set (pb->pixoverlay, "overlay-width", photo_boot_monitor_geo(pb).width, NULL);
 	g_object_set (pb->pixoverlay, "overlay-height", photo_boot_monitor_geo(pb).height, NULL);
 
-	pb->video_sink = gst_element_factory_make ("xvimagesink", NULL);
+	video_convert = gst_element_factory_make ("videoconvert", "mjpeg-videoconvert");
+
+	pb->video_sink = gst_element_factory_make ("gtksink", NULL);
 // 	g_object_set (pb->video_sink, "sync", FALSE, NULL);
 
 	if (!(pb->pixoverlay && pb->video_sink))
 	{
-		GST_ERROR_OBJECT (pb, "Failed to create pipeline element(s):%s%s", pb->pixoverlay?"":" gdkpixbufoverlay", pb->video_sink?"":" xvimagesink");
+		GST_ERROR_OBJECT (pb, "Failed to create pipeline element(s):%s%s", pb->pixoverlay?"":" gdkpixbufoverlay", pb->video_sink?"":" gtksink");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (pb->pipeline), pb->pixoverlay, pb->video_sink, NULL);
+	gst_bin_add_many (GST_BIN (pb->pipeline), pb->pixoverlay, video_convert, pb->video_sink, NULL);
 
-	if (!gst_element_link_many (pb->pixoverlay, pb->video_sink, NULL))
+	if (!gst_element_link_many (pb->pixoverlay, video_convert, pb->video_sink, NULL))
 	{
 		GST_ERROR_OBJECT(pb, "couldn't link elements!");
 		return FALSE;
 	}
 
-// 	gst_element_set_state (pb->pixoverlay, GST_STATE_PLAYING);
-// 	gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
+	g_object_get (pb->video_sink, "widget", &drawing_area, NULL);
+	photo_booth_window_add_drawing_area (priv->win, drawing_area);
+	g_signal_connect (G_OBJECT (drawing_area), "button-press-event", G_CALLBACK (photo_booth_clicked), pb);
+	g_object_unref (drawing_area);
+
 	gst_element_set_state (pb->pipeline, GST_STATE_PLAYING);
 
 	gst_bin_add_many (GST_BIN (pb->pipeline), pb->video_bin, pb->photo_bin, NULL);
 
-	bus = gst_pipeline_get_bus (GST_PIPELINE (pb->pipeline));
-
 	/* add watch for messages */
-
+	bus = gst_pipeline_get_bus (GST_PIPELINE (pb->pipeline));
 	gst_bus_add_watch (bus, (GstBusFunc) photo_booth_bus_callback, pb);
-	gst_bus_set_sync_handler (bus, (GstBusSyncHandler) photo_booth_bus_sync_callback, photo_booth_get_instance_private (pb), NULL);
 
 	photo_booth_preview (pb);
 
 	return TRUE;
-}
-
-static GstBusSyncReply photo_booth_bus_sync_callback (GstBus *bus, GstMessage *message, PhotoBoothPrivate *priv)
-{
-	if (GST_MESSAGE_TYPE (message) != GST_MESSAGE_ELEMENT)
-		return GST_BUS_PASS;
-
-	if (!gst_message_has_name (message, "prepare-window-handle"))
-		return GST_BUS_PASS;
-
-	/* FIXME: make sure to get XID in main thread */
-	GST_DEBUG_OBJECT (bus, "setting video overlay window handle");
-
-	photo_booth_window_set_spinner (priv->win, FALSE);
-	gst_video_overlay_set_window_handle (GST_VIDEO_OVERLAY (message->src), GDK_WINDOW_XID (gtk_widget_get_window (photo_booth_window_get_drawing_area (priv->win))))	;
-
-	gst_message_unref (message);
-	return GST_BUS_DROP;
 }
 
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb)
@@ -569,19 +555,19 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			gst_message_parse_state_changed (message, &old_state, &new_state, NULL);
 			GstStateChange transition = (GstStateChange)GST_STATE_TRANSITION (old_state, new_state);
 			GstElement *src = GST_ELEMENT (GST_MESSAGE_SRC (message));
-			GST_DEBUG ("%" GST_PTR_FORMAT " state transition %s -> %s", src, gst_element_state_get_name(GST_STATE_TRANSITION_CURRENT(transition)), gst_element_state_get_name(GST_STATE_TRANSITION_NEXT(transition)));
+			GST_LOG ("%" GST_PTR_FORMAT " state transition %s -> %s", src, gst_element_state_get_name(GST_STATE_TRANSITION_CURRENT(transition)), gst_element_state_get_name(GST_STATE_TRANSITION_NEXT(transition)));
 			if (src == pb->video_bin && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING)
 			{
 				GST_DEBUG ("video_bin GST_STATE_CHANGE_READY_TO_PAUSED -> CAPTURE VIDEO!");
 				SEND_COMMAND (pb, CONTROL_VIDEO);
-// 				priv = photo_booth_get_instance_private (pb);
-// 				photo_booth_window_set_spinner (priv->win, FALSE);
 			}
-// 			else if (src == pb->video_bin && transition == GST_STATE_CHANGE_PLAYING_TO_PAUSED)
-// 			{
-// 				GST_DEBUG ("video_bin GST_STATE_CHANGE_PLAYING_TO_PAUSED -> PAUSE CAPTURE!");
-// 				SEND_COMMAND (pb, CONTROL_PAUSE);
-// 			}
+			if (src == pb->video_sink && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING)
+			{
+				GST_DEBUG ("video_bin GST_STATE_CHANGE_READY_TO_PAUSED -> hide spinner!");
+				priv = photo_booth_get_instance_private (pb);
+				photo_booth_window_set_spinner (priv->win, FALSE);
+				GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_video.dot");
+			}
 			break;
 		}
 		case GST_MESSAGE_STREAM_START:
@@ -599,6 +585,31 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		}
 	}
 	return TRUE;
+}
+
+
+static void photo_booth_preview (PhotoBooth *pb)
+{
+	GstPad *pad;
+	if (pb->video_block_id)
+	{
+		GST_DEBUG_OBJECT (pb, "photo_booth_preview! halt photo_bin...");
+		gst_element_set_state (pb->photo_bin, GST_STATE_READY);
+		pad = gst_element_get_static_pad (pb->photo_bin, "src");
+		pb->photo_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_photo_probecb, pb, NULL);
+		gst_object_unref (pad);
+		gst_element_unlink (pb->photo_bin, pb->pixoverlay);
+
+		GST_DEBUG_OBJECT (pb, "photo_booth_preview! unblock video_bin...");
+		pad = gst_element_get_static_pad (pb->video_bin, "src");
+		gst_pad_remove_probe (pad, pb->video_block_id);
+		gst_object_unref (pad);
+	}
+	int ret = gst_element_link (pb->video_bin, pb->pixoverlay);
+	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->video_bin, pb->pixoverlay, ret);
+	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
+	GST_DEBUG_OBJECT (pb, "photo_booth_preview done");
+	pb->state = PB_STATE_PREVIEW;
 }
 
 extern int camera_auto_focus (Camera *list, GPContext *context, int onoff);
@@ -680,8 +691,10 @@ static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, Photo
 	GST_DEBUG_OBJECT (pb, "photo_booth_clicked state=%d", pb->state);
 	switch (pb->state) {
 		case PB_STATE_PREVIEW:
-			photo_booth_snapshot (pb);
+		{
+			photo_booth_snapshot_start (pb);
 			break;
+		}
 		case PB_STATE_TAKING_PHOTO:
 			GST_WARNING_OBJECT (pb, "BUSY TAKING A PHOTO, IGNORE CLICK");
 			break;
@@ -693,40 +706,23 @@ static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, Photo
 	}
 }
 
-static void photo_booth_preview (PhotoBooth *pb)
+static void photo_booth_snapshot_start (PhotoBooth *pb)
 {
-	GstPad *pad;
-	if (pb->video_block_id)
-	{
-		GST_DEBUG_OBJECT (pb, "photo_booth_preview! halt photo_bin...");
-		gst_element_set_state (pb->photo_bin, GST_STATE_READY);
-		pad = gst_element_get_static_pad (pb->photo_bin, "src");
-		pb->photo_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_photo_probecb, pb, NULL);
-		gst_object_unref (pad);
-		gst_element_unlink (pb->photo_bin, pb->pixoverlay);
-
-		GST_DEBUG_OBJECT (pb, "photo_booth_preview! unblock video_bin...");
-		pad = gst_element_get_static_pad (pb->video_bin, "src");
-		gst_pad_remove_probe (pad, pb->video_block_id);
-		gst_object_unref (pad);
-	}
-	int ret = gst_element_link (pb->video_bin, pb->pixoverlay);
-	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->video_bin, pb->pixoverlay, ret);
-	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
-	GST_DEBUG_OBJECT (pb, "photo_booth_preview done");
-	pb->state = PB_STATE_PREVIEW;
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	photo_booth_window_start_countdown (priv->win, 5);
+	g_timeout_add (4000, (GSourceFunc) photo_booth_snapshot_prepare, pb);
 }
 
-static void photo_booth_snapshot (PhotoBooth *pb)
+static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
 {
 	GstPad *pad;
 	gboolean ret;
 
 	GST_INFO_OBJECT (pb, "SNAPSHOT!");
+	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_pre_snapshot.dot");
 
 	if (!pb->cam_info)
-		return;
-
+		return FALSE;
 	pb->state = PB_STATE_TAKING_PHOTO;
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
@@ -752,6 +748,8 @@ static void photo_booth_snapshot (PhotoBooth *pb)
 	ret = gst_element_link (pb->photo_bin, pb->pixoverlay);
 	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->photo_bin, pb->pixoverlay, ret);
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
+
+	return FALSE; // prevent continously re-running
 }
 
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
@@ -792,12 +790,10 @@ int main (int argc, char *argv[])
 	gst_init (&argc, &argv);
 
 	pb = photo_booth_new ();
-	pb->loop = g_main_loop_new (NULL, FALSE);
 
-	g_unix_signal_add (SIGINT, (GSourceFunc) photo_booth_quit_signal, pb->loop);
+	g_unix_signal_add (SIGINT, (GSourceFunc) photo_booth_quit_signal, pb);
 	ret = g_application_run (G_APPLICATION (pb), argc, argv);
-	g_main_loop_run (pb->loop);
-
+	GST_INFO_OBJECT (pb, "g_application_run returned %i", ret);
 	g_object_unref (pb);
 	return ret;
 }

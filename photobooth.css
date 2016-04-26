@@ -1,3 +1,10 @@
-.spinner {
-    background-color: rgba (0, 255, 0, 127);
+.transparentbg {
+	background: rgba (0, 0, 0, 0);
+}
+
+.countdown_label {
+	color: white;
+	font-weight: bold;
+	font-size: 60px;
+	padding: 0 0 0 0; 
 }

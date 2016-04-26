@@ -24,6 +24,8 @@ struct _PhotoBoothWindowPrivate
 {
 	GtkWidget *overlay;
 	GtkWidget *drawing_area, *spinner, *statusbar;
+	GtkLabel *countdown_label;
+	gint countdown;
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLICATION_WINDOW);
@@ -33,8 +35,9 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	GST_DEBUG_OBJECT (klass, "photo_booth_window_class_init");
 	gtk_widget_class_set_template_from_resource (GTK_WIDGET_CLASS (klass), "/org/schaffenburg/photobooth/photobooth.ui");
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, overlay);
-	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, drawing_area);
+// 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, drawing_area);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
+	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
 // 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, statusbar);
 }
 
@@ -47,32 +50,32 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 void photo_booth_window_setup (PhotoBoothWindow *win, GdkRectangle *monitor_geo)
 {
 	PhotoBoothWindowPrivate *priv;
-	g_print ("photo_booth_window_setup\n");
 	priv = photo_booth_window_get_instance_private (win);
 	GdkScreen *screen = gdk_screen_get_default ();
 	gtk_window_fullscreen_on_monitor (GTK_WINDOW (win), screen, 0);
 	GdkWindow *w = gdk_screen_get_active_window (screen);
 	gint m = gdk_screen_get_monitor_at_window (screen, w);
 	gdk_screen_get_monitor_geometry (screen, m, monitor_geo);
-	gtk_widget_add_events (priv->drawing_area, GDK_BUTTON_PRESS_MASK);
 	GFile *cssfile = g_file_new_for_path ("photobooth.css");
 	if (cssfile)
 	{
 		GtkCssProvider *cssprovider = gtk_css_provider_new ();
 		gtk_css_provider_load_from_file (cssprovider, cssfile, NULL);
 		gtk_style_context_add_provider_for_screen (screen, (GtkStyleProvider *)cssprovider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-		g_print ("added css style provider\n");
 		g_object_unref (cssfile);
 	}
-	gtk_widget_show_all (priv->overlay);
-	gtk_widget_show_all (GTK_WIDGET (win));
 }
 
-GtkWidget* photo_booth_window_get_drawing_area (PhotoBoothWindow *win)
+void photo_booth_window_add_drawing_area (PhotoBoothWindow *win, GtkWidget *drawing_area)
 {
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
-	return priv->drawing_area;
+	gtk_container_add (GTK_CONTAINER (priv->overlay), drawing_area);
+	gtk_widget_add_events (drawing_area, GDK_BUTTON_PRESS_MASK);
+	gtk_widget_realize (drawing_area);
+	gtk_widget_show (drawing_area);
+	gtk_widget_show (priv->overlay);
+	priv->drawing_area = drawing_area;
 }
 
 void photo_booth_window_set_spinner (PhotoBoothWindow *win, gboolean active)
@@ -91,8 +94,43 @@ void photo_booth_window_set_spinner (PhotoBoothWindow *win, gboolean active)
 	}
 }
 
+gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
+{
+	PhotoBoothWindowPrivate *priv;
+	gchar *str;
+	priv = photo_booth_window_get_instance_private (win);
+	priv->countdown--;
+	GST_DEBUG ("_pbw_tick_countdown %i", priv->countdown);
+	if (priv->countdown > 0)
+	{
+		str = g_strdup_printf ("%d...", priv->countdown);
+		gtk_label_set_text (priv->countdown_label, str);
+		g_free (str);
+	}
+	else if (priv->countdown == 0)
+	{
+		gtk_label_set_text (priv->countdown_label, "SAY CHEESE!");
+	}
+	else if (priv->countdown == -1)
+	{
+		gtk_widget_hide (GTK_WIDGET (priv->countdown_label));
+		return FALSE;
+	}
+	return TRUE;
+}
+
+void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
+{
+	PhotoBoothWindowPrivate *priv;
+	GST_DEBUG ("photo_booth_window_start_countdown %i", count);
+	priv = photo_booth_window_get_instance_private (win);
+	priv->countdown = count;
+	_pbw_tick_countdown(win);
+	gtk_widget_show (GTK_WIDGET (priv->countdown_label));
+	g_timeout_add (1000, (GSourceFunc) _pbw_tick_countdown, win);
+}
+
 PhotoBoothWindow * photo_booth_window_new (PhotoBooth *pb)
 {
-	g_print ("photo_booth_window_new\n");
-	return g_object_new (PHOTO_BOOTH_WINDOW_TYPE, "photobooth", pb, NULL);
+	return g_object_new (PHOTO_BOOTH_WINDOW_TYPE, "application", pb, NULL);
 }
