@@ -63,7 +63,7 @@ struct _CameraInfo {
 
 typedef enum
 {
-	CAPTURE_NONE = 0,
+	CAPTURE_INIT = 0,
 	CAPTURE_VIDEO,
 	CAPTURE_PHOTO,
 	CAPTURE_PAUSED,

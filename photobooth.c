@@ -38,6 +38,18 @@ struct _PhotoBoothPrivate
 {
 	PhotoBoothWindow *win;
 	GdkRectangle monitor_geo;
+	GSettings *settings;
+	guint countdown;
+	GstElement *audio_playbin;
+};
+
+#define DEFAULT_AUDIOFILE_COUNTDOWN "/net/home/fraxinas/microcontroller/photobooth/beep.m4a"
+#define DEFAULT_COUNTDOWN 5
+
+enum
+{
+	ARG_0,
+	ARG_COUNTDOWN,
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION);
@@ -48,6 +60,9 @@ GST_DEBUG_CATEGORY_STATIC (photo_booth_debug);
 /* GObject / GApplication */
 static void photo_booth_activate (GApplication *app);
 static void photo_booth_open (GApplication  *app, GFile **files, gint n_files, const gchar *hint);
+static void photo_booth_set_property (GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
+static void photo_booth_get_property (GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
+static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
 static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, PhotoBooth *pb);
@@ -57,7 +72,7 @@ static GdkRectangle photo_boot_monitor_geo (PhotoBooth *pb);
 static void photo_booth_quit_signal (PhotoBooth *pb);
 static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb);
 static void photo_booth_setup_window (PhotoBooth *pb);
-static void photo_booth_preview (PhotoBooth *pb);
+static gboolean photo_booth_preview (PhotoBooth *pb);
 static void photo_booth_snapshot_start (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
@@ -81,12 +96,21 @@ static void photo_booth_class_init (PhotoBoothClass *klass)
 	GST_DEBUG_CATEGORY_INIT (photo_booth_debug, "photobooth", GST_DEBUG_BOLD | GST_DEBUG_FG_YELLOW | GST_DEBUG_BG_BLUE, "PhotoBooth");
 	GST_DEBUG ("photo_booth_class_init");
 	gobject_class->finalize = photo_booth_finalize;
+	gobject_class->set_property = photo_booth_set_property;
+	gobject_class->get_property = photo_booth_get_property;
 	gapplication_class->activate = photo_booth_activate;
 	gapplication_class->open = photo_booth_open;
+	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_COUNTDOWN,
+	  g_param_spec_uint ("countdown", "Shutter delay (s)",
+	    "Shutter actuation delay countdown in seconds", 0, 60, DEFAULT_COUNTDOWN,
+	    G_PARAM_CONSTRUCT | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 }
 
 static void photo_booth_init (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+
 	GST_DEBUG_OBJECT (pb, "photo_booth_init init object!");
 
 	int control_sock[2];
@@ -100,8 +124,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	fcntl (READ_SOCKET (pb), F_SETFL, O_NONBLOCK);
 	fcntl (WRITE_SOCKET (pb), F_SETFL, O_NONBLOCK);
 
-	if (!photo_booth_cam_init (&pb->cam_info))
-		GST_ERROR_OBJECT (pb, "can't init cam!");
+	pb->cam_info = NULL;
 
 	pb->pipeline = NULL;
 	pb->state = PB_STATE_NONE;
@@ -110,6 +133,8 @@ static void photo_booth_init (PhotoBooth *pb)
 
 	pb->capture_thread = NULL;
 	pb->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
+
+	priv->settings = NULL;
 }
 
 static void photo_booth_setup_window (PhotoBooth *pb)
@@ -145,6 +170,14 @@ static void photo_booth_finalize (GObject *object)
 	g_thread_join (pb->capture_thread);
 	if (pb->cam_info)
 		photo_booth_cam_close (&pb->cam_info);
+}
+
+static void photo_booth_dispose (GObject *object)
+{
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (PHOTO_BOOTH (object));
+	g_clear_object (&priv->settings);
+	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
 }
 
 static GdkRectangle photo_boot_monitor_geo (PhotoBooth *pb)
@@ -235,14 +268,44 @@ static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBoo
 	g_application_quit (G_APPLICATION (pb));
 }
 
+static void photo_booth_set_property (GObject * object, guint prop_id, const GValue * value, GParamSpec * pspec)
+{
+	PhotoBooth *pb = PHOTO_BOOTH (object);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+
+	switch (prop_id) {
+		case ARG_COUNTDOWN:
+			priv->countdown = g_value_get_uint (value);
+			break;
+		default:
+			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+			break;
+	}
+}
+
+static void photo_booth_get_property (GObject * object, guint prop_id, GValue * value, GParamSpec * pspec)
+{
+	PhotoBooth *pb = PHOTO_BOOTH (object);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+
+	switch (prop_id) {
+		case ARG_COUNTDOWN:
+			g_value_set_int (value, priv->countdown);
+			break;
+		default:
+			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+			break;
+	}
+}
+
 static void photo_booth_capture_thread_func (PhotoBooth *pb)
 {
-	PhotoboothCaptureThreadState state = CAPTURE_NONE;
+	PhotoboothCaptureThreadState state = CAPTURE_INIT;
 
 	mkfifo("moviepipe", 0666);
 	pb->video_fd = open("moviepipe", O_RDWR);
 
-	GST_DEBUG_OBJECT (pb, "enter capture thread fd = %d cam_info@%p", pb->video_fd, pb->cam_info);
+	GST_DEBUG_OBJECT (pb, "enter capture thread fd = %d", pb->video_fd);
 
 	CameraFile *gp_file = NULL;
 	int gpret, captured_frames = 0;
@@ -262,20 +325,25 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		rfd[0].fd = READ_SOCKET (pb);
 		rfd[0].events = POLLIN | POLLERR | POLLHUP | POLLPRI;
 
-		if (!pb->cam_info)
+		if (state == CAPTURE_INIT && !pb->cam_info)
 		{
-			if (!photo_booth_cam_init (&pb->cam_info))
-				GST_DEBUG_OBJECT (pb, "no camera info - can't capture!");
-			timeout = 10000;
+			if (photo_booth_cam_init (&pb->cam_info))
+			{
+				GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
+				state = CAPTURE_VIDEO;
+				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
+			}
+			else
+				GST_INFO_OBJECT (pb, "no camera info.");
+			timeout = 5000;
 		}
-		else if (pb->state == PB_STATE_NONE)
-			pb->state = PB_STATE_PREVIEW;
 		else if (state == CAPTURE_PAUSED)
 			timeout = 1000;
 		else
 			timeout = 1000 / PREVIEW_FPS;
 
 		int ret = poll(rfd, 1, timeout);
+
 		if (G_UNLIKELY (ret == -1))
 		{
 			GST_ERROR_OBJECT (pb, "SELECT ERROR!");
@@ -291,7 +359,12 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				g_mutex_unlock (&pb->cam_info->mutex);
 				if (gpret < 0) {
 					GST_ERROR_OBJECT (pb, "Movie capture error %d", gpret);
-					state = CAPTURE_STOP;
+					if (gpret == -7)
+					{
+						state = CAPTURE_INIT;
+						pb->state = PB_STATE_NONE;
+						photo_booth_cam_close (&pb->cam_info);
+					}
 					continue;
 				}
 				else {
@@ -300,7 +373,6 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					g_mutex_unlock (&pb->cam_info->mutex);
 					if (strcmp (mime, GP_MIME_JPEG)) {
 						GST_ERROR_OBJECT ("Movie capture error... Unhandled MIME type '%s'.", mime);
-						state = CAPTURE_STOP;
 						continue;
 					}
 					captured_frames++;
@@ -318,7 +390,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				else
 				{
 					GST_ERROR_OBJECT (pb, "taking photo failed!");
-					state = CAPTURE_STOP;
+					state = CAPTURE_INIT;
 				}
 			}
 		}
@@ -342,7 +414,6 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				case CONTROL_PHOTO:
 					GST_DEBUG_OBJECT (pb, "CONTROL_PHOTO");
 					state = CAPTURE_PHOTO;
-// 					photo_booth_flush_pipe (pb->video_fd);
 					break;
 				default:
 					GST_ERROR_OBJECT (pb, "illegal control socket command %c received!", command);
@@ -509,7 +580,11 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	bus = gst_pipeline_get_bus (GST_PIPELINE (pb->pipeline));
 	gst_bus_add_watch (bus, (GstBusFunc) photo_booth_bus_callback, pb);
 
-	photo_booth_preview (pb);
+	GstElement* audio_pipeline;
+	audio_pipeline = gst_pipeline_new ("audio-pipeline");
+	priv->audio_playbin = gst_element_factory_make ("playbin", "audio-playbin");
+	gst_bin_add (GST_BIN (audio_pipeline), priv->audio_playbin);
+	GST_LOG ("added %" GST_PTR_FORMAT " to %" GST_PTR_FORMAT "", priv->audio_playbin, audio_pipeline);
 
 	return TRUE;
 }
@@ -588,7 +663,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 }
 
 
-static void photo_booth_preview (PhotoBooth *pb)
+static gboolean photo_booth_preview (PhotoBooth *pb)
 {
 	GstPad *pad;
 	if (pb->video_block_id)
@@ -610,6 +685,7 @@ static void photo_booth_preview (PhotoBooth *pb)
 	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
 	GST_DEBUG_OBJECT (pb, "photo_booth_preview done");
 	pb->state = PB_STATE_PREVIEW;
+	return FALSE;
 }
 
 extern int camera_auto_focus (Camera *list, GPContext *context, int onoff);
@@ -686,7 +762,7 @@ static gboolean photo_booth_take_photo (CameraInfo *cam_info)
 	return TRUE;
 }
 
-static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, PhotoBooth *pb)
+static void photo_booth_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBooth *pb)
 {
 	GST_DEBUG_OBJECT (pb, "photo_booth_clicked state=%d", pb->state);
 	switch (pb->state) {
@@ -709,12 +785,20 @@ static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, Photo
 static void photo_booth_snapshot_start (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	photo_booth_window_start_countdown (priv->win, 5);
-	g_timeout_add (4000, (GSourceFunc) photo_booth_snapshot_prepare, pb);
+	photo_booth_window_start_countdown (priv->win, priv->countdown);
+	guint delay = priv->countdown > 1 ? (priv->countdown*1000)-100 : 1;
+	GST_INFO_OBJECT (pb, "started countdown of %d seconds, start taking photo in %d ms", priv->countdown, delay);
+	g_timeout_add (delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
+	gchar* uri = g_filename_to_uri (DEFAULT_AUDIOFILE_COUNTDOWN, NULL, NULL);
+	GST_INFO_OBJECT (pb, "audio uri: %s", uri);
+	g_object_set (priv->audio_playbin, "uri", uri, NULL);
+	g_free (uri);
+	gst_element_set_state (GST_ELEMENT_PARENT (priv->audio_playbin), GST_STATE_PLAYING);
 }
 
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv;
 	GstPad *pad;
 	gboolean ret;
 
@@ -724,9 +808,11 @@ static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
 	if (!pb->cam_info)
 		return FALSE;
 	pb->state = PB_STATE_TAKING_PHOTO;
-	PhotoBoothPrivate *priv;
+
 	priv = photo_booth_get_instance_private (pb);
 	photo_booth_window_set_spinner (priv->win, TRUE);
+
+	gst_element_set_state (priv->audio_playbin, GST_STATE_READY);
 
 	SEND_COMMAND (pb, CONTROL_PHOTO);
 
@@ -749,7 +835,7 @@ static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
 	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->photo_bin, pb->pixoverlay, ret);
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 
-	return FALSE; // prevent continously re-running
+	return FALSE;
 }
 
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
@@ -771,7 +857,7 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	SEND_COMMAND (pb, CONTROL_PAUSE);
 	pb->state = PB_STATE_ASKING;
 
-	return FALSE; // prevent continously re-running
+	return FALSE;
 }
 
 PhotoBooth *photo_booth_new (void)
