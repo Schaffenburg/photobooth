@@ -124,7 +124,7 @@ void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 	PhotoBoothWindowPrivate *priv;
 	GST_DEBUG ("photo_booth_window_start_countdown %i", count);
 	priv = photo_booth_window_get_instance_private (win);
-	priv->countdown = count;
+	priv->countdown = count+1;
 	_pbw_tick_countdown(win);
 	gtk_widget_show (GTK_WIDGET (priv->countdown_label));
 	g_timeout_add (1000, (GSourceFunc) _pbw_tick_countdown, win);
