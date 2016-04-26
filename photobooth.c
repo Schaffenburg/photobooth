@@ -59,12 +59,14 @@ static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, GMainLoo
 static void photo_booth_setup_window (PhotoBooth *pb);
 static void photo_booth_preview (PhotoBooth *pb);
 static void photo_booth_snapshot (PhotoBooth *pb);
+static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
 
 /* libgphoto2 */
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
 static gboolean photo_booth_cam_close (CameraInfo **cam_info);
+static gboolean photo_booth_take_photo (CameraInfo *cam_info);
 static void photo_booth_flush_pipe (int fd);
-static void photo_booth_video_capture_thread_func (PhotoBooth *pb);
+static void photo_booth_capture_thread_func (PhotoBooth *pb);
 
 /* gstreamer functions */
 static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb);
@@ -105,8 +107,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	pb->video_block_id = 0;
 	pb->photo_block_id = 0;
 
-	pb->video_capture_thread = NULL;
-	pb->video_capture_thread = g_thread_try_new ("video-capture", (GThreadFunc) photo_booth_video_capture_thread_func, pb, NULL);
+	pb->capture_thread = NULL;
+	pb->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
 }
 
 static void photo_booth_setup_window (PhotoBooth *pb)
@@ -141,7 +143,7 @@ static void photo_booth_finalize (GObject *object)
 	GST_INFO_OBJECT (pb, "finalize server");
 	SEND_COMMAND (pb, CONTROL_STOP);
 	photo_booth_flush_pipe (pb->video_fd);
-	g_thread_join (pb->video_capture_thread);
+	g_thread_join (pb->capture_thread);
 	if (pb->cam_info)
 		photo_booth_cam_close (&pb->cam_info);
 }
@@ -183,6 +185,8 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 	g_mutex_init (&(*cam_info)->mutex);
 	g_mutex_lock (&(*cam_info)->mutex);
 	(*cam_info)->preview_capture_count = 0;
+	(*cam_info)->size = 0;
+	(*cam_info)->data = NULL;
 	(*cam_info)->context = gp_context_new();
 	gp_log_add_func(GP_LOG_ERROR, _gphoto_err, NULL);
 	gp_camera_new(&(*cam_info)->camera);
@@ -232,26 +236,26 @@ static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, GMainLoo
 	g_main_loop_quit (loop);
 }
 
-static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
+static void photo_booth_capture_thread_func (PhotoBooth *pb)
 {
-	PhotoboothReadthreadState state = CAPTURETHREAD_NONE;
+	PhotoboothCaptureThreadState state = CAPTURE_NONE;
 
 	mkfifo("moviepipe", 0666);
 	pb->video_fd = open("moviepipe", O_RDWR);
 
-	GST_DEBUG_OBJECT (pb, "enter video capture thread fd = %d cam_info@%p", pb->video_fd, pb->cam_info);
+	GST_DEBUG_OBJECT (pb, "enter capture thread fd = %d cam_info@%p", pb->video_fd, pb->cam_info);
 
 	CameraFile *gp_file = NULL;
 	int gpret, captured_frames = 0;
 
 	if (gp_file_new_from_fd (&gp_file, pb->video_fd) != GP_OK)
 	{
-		GST_ERROR_OBJECT (pb, "couldn't start video capture thread because gp_file_new_from_fd (%d) failed!", pb->video_fd);
+		GST_ERROR_OBJECT (pb, "couldn't start capture thread because gp_file_new_from_fd (%d) failed!", pb->video_fd);
 		goto stop_running;
 	}
 
 	while (TRUE) {
-		if (state == CAPTURETHREAD_STOP)
+		if (state == CAPTURE_STOP)
 			goto stop_running;
 
 		struct pollfd rfd[2];
@@ -267,7 +271,7 @@ static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
 		}
 		else if (pb->state == PB_STATE_NONE)
 			pb->state = PB_STATE_PREVIEW;
-		else if (state == CAPTURETHREAD_PAUSED)
+		else if (state == CAPTURE_PAUSED)
 			timeout = 1000;
 		else
 			timeout = 1000 / PREVIEW_FPS;
@@ -278,8 +282,9 @@ static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
 			GST_ERROR_OBJECT (pb, "SELECT ERROR!");
 			goto stop_running;
 		}
-		else if (ret == 0 && state >= CAPTURETHREAD_RUN)
+		else if (ret == 0 && state == CAPTURE_VIDEO)
 		{
+			GST_DEBUG_OBJECT (pb, "STATE == CAPTURE_VIDEO");
 			const char *mime;
 			if (pb->cam_info)
 			{
@@ -288,7 +293,7 @@ static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
 				g_mutex_unlock (&pb->cam_info->mutex);
 				if (gpret < 0) {
 					GST_ERROR_OBJECT (pb, "Movie capture error %d", gpret);
-					state = CAPTURETHREAD_STOP;
+					state = CAPTURE_STOP;
 					continue;
 				}
 				else {
@@ -297,11 +302,26 @@ static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
 					g_mutex_unlock (&pb->cam_info->mutex);
 					if (strcmp (mime, GP_MIME_JPEG)) {
 						GST_ERROR_OBJECT ("Movie capture error... Unhandled MIME type '%s'.", mime);
-						state = CAPTURETHREAD_STOP;
+						state = CAPTURE_STOP;
 						continue;
 					}
 					captured_frames++;
 					GST_DEBUG_OBJECT (pb, "captured frame (%d frames total)", captured_frames);
+				}
+			}
+		}
+		else if (ret == 0 && state == CAPTURE_PHOTO)
+		{
+			GST_DEBUG_OBJECT (pb, "STATE == CAPTURE_PHOTO");
+			if (pb->cam_info)
+			{
+				ret = photo_booth_take_photo (pb->cam_info);
+				if (ret)
+					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
+				else
+				{
+					GST_ERROR_OBJECT (pb, "taking photo failed!");
+					state = CAPTURE_STOP;
 				}
 			}
 		}
@@ -312,22 +332,27 @@ static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
 			switch (command) {
 				case CONTROL_STOP:
 					GST_DEBUG_OBJECT (pb, "CONTROL_STOP!");
-					state = CAPTURETHREAD_STOP;
+					state = CAPTURE_STOP;
 					break;
 				case CONTROL_PAUSE:
 					GST_DEBUG_OBJECT (pb, "CONTROL_PAUSE!");
-					state = CAPTURETHREAD_PAUSED;
+					state = CAPTURE_PAUSED;
 					break;
-				case CONTROL_RUN:
-					GST_DEBUG_OBJECT (pb, "CONTROL_RUN");
-					state = CAPTURETHREAD_RUN;
+				case CONTROL_VIDEO:
+					GST_DEBUG_OBJECT (pb, "CONTROL_VIDEO");
+					state = CAPTURE_VIDEO;
+					break;
+				case CONTROL_PHOTO:
+					GST_DEBUG_OBJECT (pb, "CONTROL_PHOTO");
+					state = CAPTURE_PHOTO;
+// 					photo_booth_flush_pipe (pb->video_fd);
 					break;
 				default:
 					GST_ERROR_OBJECT (pb, "illegal control socket command %c received!", command);
 			}
 			continue;
 		}
-		else if (state == CAPTURETHREAD_PAUSED)
+		else if (state == CAPTURE_PAUSED)
 		{
 			GST_DEBUG_OBJECT (pb, "captured thread paused... timeout");
 		}
@@ -345,7 +370,6 @@ static void photo_booth_video_capture_thread_func (PhotoBooth *pb)
 		GST_DEBUG ("stop running, exit thread, %d frames captured", captured_frames);
 		return;
 	}
-
 }
 
 static GstElement *build_video_bin (PhotoBooth *pb)
@@ -548,16 +572,16 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			GST_DEBUG ("%" GST_PTR_FORMAT " state transition %s -> %s", src, gst_element_state_get_name(GST_STATE_TRANSITION_CURRENT(transition)), gst_element_state_get_name(GST_STATE_TRANSITION_NEXT(transition)));
 			if (src == pb->video_bin && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING)
 			{
-				GST_DEBUG ("video_bin GST_STATE_CHANGE_READY_TO_PAUSED -> RUN CAPTURE!");
-				SEND_COMMAND (pb, CONTROL_RUN);
+				GST_DEBUG ("video_bin GST_STATE_CHANGE_READY_TO_PAUSED -> CAPTURE VIDEO!");
+				SEND_COMMAND (pb, CONTROL_VIDEO);
 // 				priv = photo_booth_get_instance_private (pb);
 // 				photo_booth_window_set_spinner (priv->win, FALSE);
 			}
-			else if (src == pb->video_bin && transition == GST_STATE_CHANGE_PLAYING_TO_PAUSED)
-			{
-				GST_DEBUG ("video_bin GST_STATE_CHANGE_PLAYING_TO_PAUSED -> PAUSE CAPTURE!");
-				SEND_COMMAND (pb, CONTROL_PAUSE);
-			}
+// 			else if (src == pb->video_bin && transition == GST_STATE_CHANGE_PLAYING_TO_PAUSED)
+// 			{
+// 				GST_DEBUG ("video_bin GST_STATE_CHANGE_PLAYING_TO_PAUSED -> PAUSE CAPTURE!");
+// 				SEND_COMMAND (pb, CONTROL_PAUSE);
+// 			}
 			break;
 		}
 		case GST_MESSAGE_STREAM_START:
@@ -617,7 +641,7 @@ static gboolean photo_booth_focus (CameraInfo *cam_info)
 	return TRUE;
 }
 
-static gboolean photo_booth_take_photo (CameraInfo *cam_info, const char **ptr, unsigned long int *size)
+static gboolean photo_booth_take_photo (CameraInfo *cam_info)
 {
 	int gpret;
 	CameraFile *file;
@@ -639,8 +663,7 @@ static gboolean photo_booth_take_photo (CameraInfo *cam_info, const char **ptr, 
 	GST_DEBUG ("gp_camera_file_get gpret=%i", gpret);
 	if (gpret < 0)
 		return FALSE;
-
-	gp_file_get_data_and_size (file, ptr, size);
+	gp_file_get_data_and_size (file, (const char**)&(cam_info->data), &(cam_info->size));
 	if (gpret < 0)
 		return FALSE;
 
@@ -690,7 +713,6 @@ static void photo_booth_preview (PhotoBooth *pb)
 	int ret = gst_element_link (pb->video_bin, pb->pixoverlay);
 	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->video_bin, pb->pixoverlay, ret);
 	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
-// 	SEND_COMMAND (pb, CONTROL_RUN);
 	GST_DEBUG_OBJECT (pb, "photo_booth_preview done");
 	pb->state = PB_STATE_PREVIEW;
 }
@@ -710,12 +732,7 @@ static void photo_booth_snapshot (PhotoBooth *pb)
 	priv = photo_booth_get_instance_private (pb);
 	photo_booth_window_set_spinner (priv->win, TRUE);
 
-	if (!photo_booth_focus (pb->cam_info))
-	{
-		GST_WARNING_OBJECT (pb, "OUT OF FOCUS!");
-		pb->state = PB_STATE_PREVIEW;
-		return;
-	}
+	SEND_COMMAND (pb, CONTROL_PHOTO);
 
 	gst_element_set_state (pb->video_bin, GST_STATE_READY);
 	GST_DEBUG_OBJECT (pb, "photo_booth_preview! halt video_bin...");
@@ -735,30 +752,28 @@ static void photo_booth_snapshot (PhotoBooth *pb)
 	ret = gst_element_link (pb->photo_bin, pb->pixoverlay);
 	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->photo_bin, pb->pixoverlay, ret);
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
+}
 
-	char	*data;
-	unsigned long size;
-	ret = photo_booth_take_photo (pb->cam_info, (const char**)&data, &size);
-	if (ret)
-	{
-		GstElement *appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
-		GstBuffer *buffer;
-		GstFlowReturn flowret;
+static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
+{
+	GST_INFO_OBJECT (pb, "photo_booth_snapshot_taken size=%lu", pb->cam_info->size);
 
-		buffer = gst_buffer_new_wrapped (data, size);
-		g_signal_emit_by_name (appsrc, "push-buffer", buffer, &flowret);
+	GstElement *appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
+	GstBuffer *buffer;
+	GstFlowReturn flowret;
 
-		if (flowret != GST_FLOW_OK)
-			GST_ERROR_OBJECT(appsrc, "couldn't push %" GST_PTR_FORMAT " to appsrc", buffer);
-		gst_object_unref (appsrc);
-		GST_INFO_OBJECT (pb, "photo_booth_snapshot now waiting for user input... PB_STATE_ASKING");
-		pb->state = PB_STATE_ASKING;
-		return;
-	}
-	GST_INFO_OBJECT (pb, "photo_booth_take_photo_push_to_appsrc failed!");
-	gst_element_set_state (pb->pipeline, GST_STATE_NULL);
-	g_main_loop_quit (pb->loop);
-// 	photo_booth_preview (pb);
+	buffer = gst_buffer_new_wrapped (pb->cam_info->data, pb->cam_info->size);
+	g_signal_emit_by_name (appsrc, "push-buffer", buffer, &flowret);
+
+	if (flowret != GST_FLOW_OK)
+		GST_ERROR_OBJECT(appsrc, "couldn't push %" GST_PTR_FORMAT " to appsrc", buffer);
+	gst_object_unref (appsrc);
+	GST_INFO_OBJECT (pb, "photo_booth_snapshot now waiting for user input... PB_STATE_ASKING");
+
+	SEND_COMMAND (pb, CONTROL_PAUSE);
+	pb->state = PB_STATE_ASKING;
+
+	return FALSE; // prevent continously re-running
 }
 
 PhotoBooth *photo_booth_new (void)

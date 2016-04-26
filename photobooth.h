@@ -23,9 +23,10 @@
 #include <gphoto2/gphoto2.h>
 #include <gphoto2/gphoto2-camera.h>
 
-#define CONTROL_RUN            'R'     /* start movie capture */
-#define CONTROL_PAUSE          'P'     /* pause movie capture */
-#define CONTROL_STOP           'S'     /* stop movie capture */
+#define CONTROL_VIDEO          'V'     /* start movie capture */
+#define CONTROL_PHOTO          'T'     /* photo capture */
+#define CONTROL_PAUSE          'P'     /* pause capture */
+#define CONTROL_STOP           'S'     /* stop capture thread */
 #define CONTROL_SOCKETS(src)   src->control_sock
 #define WRITE_SOCKET(src)      src->control_sock[1]
 #define READ_SOCKET(src)       src->control_sock[0]
@@ -56,15 +57,18 @@ struct _CameraInfo {
 	GPContext *context;
 	GMutex mutex;
 	int preview_capture_count;
+	char *data;
+	unsigned long size;
 };
 
 typedef enum
 {
-	CAPTURETHREAD_NONE = 0,
-	CAPTURETHREAD_STOP,
-	CAPTURETHREAD_PAUSED,
-	CAPTURETHREAD_RUN,
-} PhotoboothReadthreadState;
+	CAPTURE_NONE = 0,
+	CAPTURE_VIDEO,
+	CAPTURE_PHOTO,
+	CAPTURE_PAUSED,
+	CAPTURE_STOP,
+} PhotoboothCaptureThreadState;
 
 typedef enum
 {
