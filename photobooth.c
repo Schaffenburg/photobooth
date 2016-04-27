@@ -90,6 +90,7 @@ static gboolean photo_booth_cam_close (CameraInfo **cam_info);
 static gboolean photo_booth_take_photo (CameraInfo *cam_info);
 static void photo_booth_flush_pipe (int fd);
 static void photo_booth_capture_thread_func (PhotoBooth *pb);
+static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, void *data);
 
 /* gstreamer functions */
 static GstElement *build_video_bin (PhotoBooth *pb);
@@ -105,6 +106,8 @@ static void photo_booth_class_init (PhotoBoothClass *klass)
 
 	GST_DEBUG_CATEGORY_INIT (photo_booth_debug, "photobooth", GST_DEBUG_BOLD | GST_DEBUG_FG_YELLOW | GST_DEBUG_BG_BLUE, "PhotoBooth");
 	GST_DEBUG ("photo_booth_class_init");
+	gp_log_add_func(GP_LOG_ERROR, _gphoto_err, NULL);
+
 	gobject_class->finalize = photo_booth_finalize;
 	gobject_class->set_property = photo_booth_set_property;
 	gobject_class->get_property = photo_booth_get_property;
@@ -236,7 +239,6 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 	(*cam_info)->size = 0;
 	(*cam_info)->data = NULL;
 	(*cam_info)->context = gp_context_new();
-	gp_log_add_func(GP_LOG_ERROR, _gphoto_err, NULL);
 	gp_camera_new(&(*cam_info)->camera);
 	retval = gp_camera_init((*cam_info)->camera, (*cam_info)->context);
 	GST_DEBUG ("gp_camera_init returned %d cam_info@%p camera@%p", retval, *cam_info, (*cam_info)->camera);
