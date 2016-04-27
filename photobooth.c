@@ -90,6 +90,7 @@ static gboolean photo_booth_cam_close (CameraInfo **cam_info);
 static gboolean photo_booth_take_photo (CameraInfo *cam_info);
 static void photo_booth_flush_pipe (int fd);
 static void photo_booth_capture_thread_func (PhotoBooth *pb);
+static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, void *data);
 
 /* gstreamer functions */
 static GstElement *build_video_bin (PhotoBooth *pb);
@@ -105,6 +106,8 @@ static void photo_booth_class_init (PhotoBoothClass *klass)
 
 	GST_DEBUG_CATEGORY_INIT (photo_booth_debug, "photobooth", GST_DEBUG_BOLD | GST_DEBUG_FG_YELLOW | GST_DEBUG_BG_BLUE, "PhotoBooth");
 	GST_DEBUG ("photo_booth_class_init");
+	gp_log_add_func(GP_LOG_ERROR, _gphoto_err, NULL);
+
 	gobject_class->finalize = photo_booth_finalize;
 	gobject_class->set_property = photo_booth_set_property;
 	gobject_class->get_property = photo_booth_get_property;
@@ -155,7 +158,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	}
 
 	pb->capture_thread = NULL;
-	pb->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
+// 	pb->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL); //!!!TODO FIXME
 
 	priv->settings = NULL;
 }
@@ -236,7 +239,7 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 	(*cam_info)->size = 0;
 	(*cam_info)->data = NULL;
 	(*cam_info)->context = gp_context_new();
-	gp_log_add_func(GP_LOG_ERROR, _gphoto_err, NULL);
+
 	gp_camera_new(&(*cam_info)->camera);
 	retval = gp_camera_init((*cam_info)->camera, (*cam_info)->context);
 	GST_DEBUG ("gp_camera_init returned %d cam_info@%p camera@%p", retval, *cam_info, (*cam_info)->camera);
@@ -748,10 +751,107 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	return FALSE;
 }
 
+static GtkPrintSettings *settings = NULL;
+
+static void
+begin_print (GObject *obj, gpointer user_data)
+{
+	GST_DEBUG_OBJECT (obj, "begin_print");
+}
+
+static void
+draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr)
+{
+	GST_DEBUG_OBJECT (context, "draw_page no. %p", page_nr);
+	cairo_t *cr = gtk_print_context_get_cairo_context (context);
+	/* Draw a red rectangle, as wide as the paper (inside the margins) */
+	cairo_set_source_rgb (cr, 1.0, 0, 0);
+	cairo_rectangle (cr, 0, 0, gtk_print_context_get_width (context), 50);
+	cairo_fill (cr);
+	/* Draw path */
+	cairo_set_source_rgb (cr, 0, 0, 0);
+	cairo_move_to (cr, 90, 75);
+	cairo_line_to (cr, 60, 80);
+	cairo_curve_to (cr, 40, 70, 65, 65, 70, 60);
+	cairo_set_line_join (cr, CAIRO_LINE_JOIN_ROUND);
+	cairo_set_line_width (cr, 5);
+	cairo_stroke (cr);
+}
+
+static void printing_error_dialog(GtkWindow *window, GError *print_error)
+{
+	GtkWidget *error_dialog;
+	printf("printing_error_dialog called\n");
+	printf("error message = %s\n", print_error->message);
+	error_dialog = gtk_message_dialog_new(GTK_WINDOW(window),
+			GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_ERROR,
+			GTK_BUTTONS_CLOSE, "Print error:\n%s",
+			print_error->message);
+	g_signal_connect(error_dialog, "response",
+			G_CALLBACK(gtk_widget_destroy), NULL);
+	gtk_widget_show(error_dialog);
+}
+
+static void print_done(GtkPrintOperation *operation,
+			GtkPrintOperationResult result, gpointer user_data)
+{
+	GError *print_error;
+	if (result != GTK_PRINT_OPERATION_RESULT_ERROR)
+		return;
+	gtk_print_operation_get_error(operation, &print_error);
+	GST_DEBUG_OBJECT (user_data, "print_done");
+	printing_error_dialog(GTK_WINDOW (user_data), print_error);
+	g_error_free(print_error);
+}
+
+
+static void
+do_print (gpointer user_data)
+{
+  GtkPrintOperation *print;
+  GtkPrintOperationResult res;
+  GError *print_error;
+
+
+  GST_DEBUG_OBJECT (user_data, "do_print");
+  
+  print = gtk_print_operation_new ();
+
+  if (settings != NULL)
+    gtk_print_operation_set_print_settings (print, settings);
+
+  g_signal_connect (print, "begin_print", G_CALLBACK (begin_print), NULL);
+  g_signal_connect (print, "draw_page", G_CALLBACK (draw_page), NULL);
+  g_signal_connect (print, "done", G_CALLBACK(print_done), NULL);
+
+  res = gtk_print_operation_run (print, GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG,
+                                 GTK_WINDOW (user_data), &print_error);
+
+  GST_DEBUG_OBJECT (user_data, "print res=%i", (int)res);
+  if (res == GTK_PRINT_OPERATION_RESULT_ERROR) {
+		printing_error_dialog(user_data, print_error);
+		g_error_free(print_error);
+	} else {
+		if (res == GTK_PRINT_OPERATION_RESULT_APPLY) {
+			if (settings != NULL)
+				g_object_unref(settings);
+			settings = g_object_ref(gtk_print_operation_get_print_settings(print));
+		}
+	}
+	
+  if (res == GTK_PRINT_OPERATION_RESULT_CANCEL)
+	  GST_DEBUG_OBJECT (user_data, "print cancelled");
+
+  g_object_unref (print);
+
+}
+
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win)
 {
 	PhotoBoothPrivate *priv;
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	do_print (win);
+	return;
 	GST_DEBUG_OBJECT (widget, "photo_booth_background_clicked state=%d", pb->state);
 
 	switch (pb->state) {
