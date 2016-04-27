@@ -25,7 +25,6 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <gdk/gdkx.h>
 #include <gst/video/videooverlay.h>
 #include "photobooth.h"
 #include "photoboothwin.h"
@@ -65,8 +64,9 @@ static void photo_booth_get_property (GObject *object, guint prop_id, GValue *va
 static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
-static void photo_booth_clicked (GtkWidget *button, GdkEventButton *event, PhotoBooth *pb);
 static GdkRectangle photo_boot_monitor_geo (PhotoBooth *pb);
+void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win);
+void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win);
 
 /* general private functions */
 static void photo_booth_quit_signal (PhotoBooth *pb);
@@ -76,6 +76,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb);
 static void photo_booth_snapshot_start (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
+static void photo_booth_print (PhotoBooth *pb);
 
 /* libgphoto2 */
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
@@ -569,7 +570,7 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 
 	g_object_get (pb->video_sink, "widget", &drawing_area, NULL);
 	photo_booth_window_add_drawing_area (priv->win, drawing_area);
-	g_signal_connect (G_OBJECT (drawing_area), "button-press-event", G_CALLBACK (photo_booth_clicked), pb);
+// 	g_signal_connect (G_OBJECT (drawing_area), "button-press-event", G_CALLBACK (photo_booth_clicked), pb);
 	g_object_unref (drawing_area);
 
 	gst_element_set_state (pb->pipeline, GST_STATE_PLAYING);
@@ -688,6 +689,89 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	return FALSE;
 }
 
+void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	GST_DEBUG_OBJECT (widget, "photo_booth_background_clicked state=%d", pb->state);
+
+	switch (pb->state) {
+		case PB_STATE_PREVIEW:
+		{
+			photo_booth_snapshot_start (pb);
+			break;
+		}
+		case PB_STATE_TAKING_PHOTO:
+			GST_WARNING_OBJECT (pb, "BUSY TAKING A PHOTO, IGNORE CLICK");
+			break;
+		case PB_STATE_ASKING:
+			photo_booth_preview (pb);
+			break;
+		default:
+			break;
+	}
+}
+
+static void photo_booth_snapshot_start (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	gchar* uri;
+	guint delay = 1;
+
+	priv = photo_booth_get_instance_private (pb);
+	photo_booth_window_start_countdown (priv->win, priv->countdown);
+	if (priv->countdown > 1)
+		delay = (priv->countdown*1000)-100;
+	GST_INFO_OBJECT (pb, "started countdown of %d seconds, start taking photo in %d ms", priv->countdown, delay);
+	g_timeout_add (delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
+	uri = g_filename_to_uri (DEFAULT_AUDIOFILE_COUNTDOWN, NULL, NULL);
+	GST_INFO_OBJECT (pb, "audio uri: %s", uri);
+	g_object_set (priv->audio_playbin, "uri", uri, NULL);
+	g_free (uri);
+	gst_element_set_state (GST_ELEMENT_PARENT (priv->audio_playbin), GST_STATE_PLAYING);
+}
+
+static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	GstPad *pad;
+	gboolean ret;
+
+	GST_INFO_OBJECT (pb, "SNAPSHOT!");
+	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_pre_snapshot.dot");
+
+	if (!pb->cam_info)
+		return FALSE;
+	pb->state = PB_STATE_TAKING_PHOTO;
+
+	priv = photo_booth_get_instance_private (pb);
+	photo_booth_window_set_spinner (priv->win, TRUE);
+
+	gst_element_set_state (priv->audio_playbin, GST_STATE_READY);
+
+	SEND_COMMAND (pb, CONTROL_PHOTO);
+
+	gst_element_set_state (pb->video_bin, GST_STATE_READY);
+	GST_DEBUG_OBJECT (pb, "photo_booth_preview! halt video_bin...");
+	pad = gst_element_get_static_pad (pb->video_bin, "src");
+	pb->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
+	gst_object_unref (pad);
+	gst_element_unlink (pb->video_bin, pb->pixoverlay);
+
+	if (pb->photo_block_id)
+	{
+		GST_DEBUG_OBJECT (pb, "photo_booth_preview! unblock photo_bin...");
+		pad = gst_element_get_static_pad (pb->photo_bin, "src");
+		gst_pad_remove_probe (pad, pb->photo_block_id);
+		gst_object_unref (pad);
+	}
+
+	ret = gst_element_link (pb->photo_bin, pb->pixoverlay);
+	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->photo_bin, pb->pixoverlay, ret);
+	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
+
+	return FALSE;
+}
+
 extern int camera_auto_focus (Camera *list, GPContext *context, int onoff);
 
 static gboolean photo_booth_focus (CameraInfo *cam_info)
@@ -762,90 +846,16 @@ static gboolean photo_booth_take_photo (CameraInfo *cam_info)
 	return TRUE;
 }
 
-static void photo_booth_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBooth *pb)
-{
-	GST_DEBUG_OBJECT (pb, "photo_booth_clicked state=%d", pb->state);
-	switch (pb->state) {
-		case PB_STATE_PREVIEW:
-		{
-			photo_booth_snapshot_start (pb);
-			break;
-		}
-		case PB_STATE_TAKING_PHOTO:
-			GST_WARNING_OBJECT (pb, "BUSY TAKING A PHOTO, IGNORE CLICK");
-			break;
-		case PB_STATE_ASKING:
-			photo_booth_preview (pb);
-			break;
-		default:
-			break;
-	}
-}
-
-static void photo_booth_snapshot_start (PhotoBooth *pb)
-{
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	photo_booth_window_start_countdown (priv->win, priv->countdown);
-	guint delay = priv->countdown > 1 ? (priv->countdown*1000)-100 : 1;
-	GST_INFO_OBJECT (pb, "started countdown of %d seconds, start taking photo in %d ms", priv->countdown, delay);
-	g_timeout_add (delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
-	gchar* uri = g_filename_to_uri (DEFAULT_AUDIOFILE_COUNTDOWN, NULL, NULL);
-	GST_INFO_OBJECT (pb, "audio uri: %s", uri);
-	g_object_set (priv->audio_playbin, "uri", uri, NULL);
-	g_free (uri);
-	gst_element_set_state (GST_ELEMENT_PARENT (priv->audio_playbin), GST_STATE_PLAYING);
-}
-
-static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
-{
-	PhotoBoothPrivate *priv;
-	GstPad *pad;
-	gboolean ret;
-
-	GST_INFO_OBJECT (pb, "SNAPSHOT!");
-	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_pre_snapshot.dot");
-
-	if (!pb->cam_info)
-		return FALSE;
-	pb->state = PB_STATE_TAKING_PHOTO;
-
-	priv = photo_booth_get_instance_private (pb);
-	photo_booth_window_set_spinner (priv->win, TRUE);
-
-	gst_element_set_state (priv->audio_playbin, GST_STATE_READY);
-
-	SEND_COMMAND (pb, CONTROL_PHOTO);
-
-	gst_element_set_state (pb->video_bin, GST_STATE_READY);
-	GST_DEBUG_OBJECT (pb, "photo_booth_preview! halt video_bin...");
-	pad = gst_element_get_static_pad (pb->video_bin, "src");
-	pb->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
-	gst_object_unref (pad);
-	gst_element_unlink (pb->video_bin, pb->pixoverlay);
-
-	if (pb->photo_block_id)
-	{
-		GST_DEBUG_OBJECT (pb, "photo_booth_preview! unblock photo_bin...");
-		pad = gst_element_get_static_pad (pb->photo_bin, "src");
-		gst_pad_remove_probe (pad, pb->photo_block_id);
-		gst_object_unref (pad);
-	}
-
-	ret = gst_element_link (pb->photo_bin, pb->pixoverlay);
-	GST_DEBUG_OBJECT (pb, "linking %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ret=%i", pb->photo_bin, pb->pixoverlay, ret);
-	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
-
-	return FALSE;
-}
-
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 {
-	GST_INFO_OBJECT (pb, "photo_booth_snapshot_taken size=%lu", pb->cam_info->size);
-
-	GstElement *appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
+	PhotoBoothPrivate *priv;
+	GstElement *appsrc;
 	GstBuffer *buffer;
 	GstFlowReturn flowret;
 
+	GST_INFO_OBJECT (pb, "photo_booth_snapshot_taken size=%lu", pb->cam_info->size);
+
+	appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
 	buffer = gst_buffer_new_wrapped (pb->cam_info->data, pb->cam_info->size);
 	g_signal_emit_by_name (appsrc, "push-buffer", buffer, &flowret);
 
@@ -854,10 +864,33 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	gst_object_unref (appsrc);
 	GST_INFO_OBJECT (pb, "photo_booth_snapshot now waiting for user input... PB_STATE_ASKING");
 
+	priv = photo_booth_get_instance_private (pb);
+	GST_INFO_OBJECT (priv->win->button_yes, "priv->win->button_yes showing....");
+	gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
+	pb->state = PB_STATE_TAKING_PHOTO;
+
 	SEND_COMMAND (pb, CONTROL_PAUSE);
 	pb->state = PB_STATE_ASKING;
 
 	return FALSE;
+}
+
+void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	GST_DEBUG_OBJECT (pb, "on_button_yes_clicked");
+	if (pb->state == PB_STATE_ASKING)
+	{
+		photo_booth_print (pb);
+	}
+}
+
+static void photo_booth_print (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	GST_DEBUG_OBJECT (pb, "!!!PRINT!!!");
+	priv = photo_booth_get_instance_private (pb);
+	gtk_widget_hide  (GTK_WIDGET (priv->win->button_yes));
 }
 
 PhotoBooth *photo_booth_new (void)

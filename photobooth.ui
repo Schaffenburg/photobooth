@@ -11,11 +11,15 @@
       <object class="GtkOverlay" id="overlay">
         <property name="visible">True</property>
         <property name="can_focus">False</property>
+        <property name="events">GDK_BUTTON_PRESS_MASK</property>
+        <signal name="button-press-event" handler="photo_booth_background_clicked" swapped="no"/>
+        <child>
+          <placeholder/>
+        </child>
         <child type="overlay">
           <object class="GtkLabel" id="countdown_label">
             <property name="width_request">400</property>
             <property name="height_request">300</property>
-            <property name="visible">False</property>
             <property name="can_focus">False</property>
             <property name="opacity">0.9</property>
             <property name="halign">center</property>
@@ -33,7 +37,7 @@
             </style>
           </object>
           <packing>
-            <property name="index">-1</property>
+            <property name="index">1</property>
           </packing>
         </child>
         <child type="overlay">
@@ -45,15 +49,47 @@
             <property name="opacity">0.8</property>
             <property name="halign">center</property>
             <property name="valign">center</property>
-            <property name="hexpand">True</property>
-            <property name="vexpand">True</property>
+            <property name="hexpand">False</property>
+            <property name="vexpand">False</property>
             <property name="active">True</property>
             <style>
               <class name="transparentbg"/>
             </style>
           </object>
           <packing>
-            <property name="index">1</property>
+            <property name="index">2</property>
+          </packing>
+        </child>
+        <child type="overlay">
+          <object class="GtkFixed">
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <child>
+              <object class="GtkButton" id="button_yes">
+                <property name="label" translatable="yes">Ausdrucken!</property>
+                <property name="width_request">300</property>
+                <property name="height_request">200</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">False</property>
+                <property name="margin_top">10</property>
+                <property name="margin_bottom">10</property>
+                <signal name="clicked" handler="photo_booth_button_yes_clicked" swapped="no"/>
+                <style>
+                  <class name="button_yes"/>
+                </style>
+              </object>
+              <packing>
+                <property name="x">130</property>
+                <property name="y">104</property>
+              </packing>
+            </child>
+            <style>
+              <class name="transparentbg"/>
+            </style>
+          </object>
+          <packing>
+            <property name="pass_through">True</property>
+            <property name="index">2</property>
           </packing>
         </child>
         <style>

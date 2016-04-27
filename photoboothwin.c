@@ -30,20 +30,21 @@ struct _PhotoBoothWindowPrivate
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLICATION_WINDOW);
 
+GST_DEBUG_CATEGORY_STATIC (photo_booth_windows_debug);
+#define GST_CAT_DEFAULT photo_booth_windows_debug
+
 static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 {
-	GST_DEBUG_OBJECT (klass, "photo_booth_window_class_init");
+	GST_DEBUG_CATEGORY_INIT (photo_booth_windows_debug, "photoboothwin", GST_DEBUG_BOLD | GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLUE, "PhotoBoothWindow");
 	gtk_widget_class_set_template_from_resource (GTK_WIDGET_CLASS (klass), "/org/schaffenburg/photobooth/photobooth.ui");
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, overlay);
-// 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, drawing_area);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
-// 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, statusbar);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_yes);
 }
 
 static void photo_booth_window_init (PhotoBoothWindow *win)
 {
-	GST_DEBUG_OBJECT (win, "photo_booth_window_init");
 	gtk_widget_init_template (GTK_WIDGET (win));
 }
 

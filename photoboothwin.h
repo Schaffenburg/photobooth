@@ -33,6 +33,7 @@ typedef struct _PhotoBoothWindowClass          PhotoBoothWindowClass;
 struct _PhotoBoothWindow
 {
 	GtkApplicationWindow parent;
+	GtkButton *button_yes;
 };
 
 struct _PhotoBoothWindowClass

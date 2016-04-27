@@ -79,11 +79,13 @@ typedef enum
 	PB_STATE_PRINTING
 } PhotoboothState;
 
+
 #define PHOTO_BOOTH_TYPE                (photo_booth_get_type ())
 #define PHOTO_BOOTH(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),PHOTO_BOOTH_TYPE,PhotoBooth))
 #define PHOTO_BOOTH_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass), PHOTO_BOOTH_TYPE,PhotoBoothClass))
 #define IS_PHOTO_BOOTH(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj),PHOTO_BOOTH_TYPE))
 #define IS_PHOTO_BOOTH_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), PHOTO_BOOTH_TYPE))
+#define PHOTO_BOOTH_FROM_WINDOW(win)    (PHOTO_BOOTH (gtk_window_get_application (GTK_WINDOW (win))))
 
 typedef struct _PhotoBooth              PhotoBooth;
 typedef struct _PhotoBoothClass         PhotoBoothClass;
