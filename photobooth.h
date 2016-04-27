@@ -75,7 +75,8 @@ typedef enum
 	PB_STATE_NONE = 0,
 	PB_STATE_PREVIEW,
 	PB_STATE_TAKING_PHOTO,
-	PB_STATE_ASKING,
+	PB_STATE_PROCESS_PHOTO,
+	PB_STATE_WAITING_FOR_ANSWER,
 	PB_STATE_PRINTING
 } PhotoboothState;
 
@@ -99,7 +100,7 @@ struct _PhotoBooth
 	GstElement *pipeline;
 	GstElement *video_bin;
 	GstElement *photo_bin;
-	GstElement *pixoverlay, *video_sink;
+	GstElement *output_bin;
 
 	int video_fd;
 	gint timeout_id;

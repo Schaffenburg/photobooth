@@ -23,7 +23,7 @@ typedef struct _PhotoBoothWindowPrivate PhotoBoothWindowPrivate;
 struct _PhotoBoothWindowPrivate
 {
 	GtkWidget *overlay;
-	GtkWidget *drawing_area, *spinner, *statusbar;
+	GtkWidget *spinner, *statusbar;
 	GtkLabel *countdown_label;
 	gint countdown;
 };
@@ -46,17 +46,10 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 static void photo_booth_window_init (PhotoBoothWindow *win)
 {
 	gtk_widget_init_template (GTK_WIDGET (win));
-}
-
-void photo_booth_window_setup (PhotoBoothWindow *win, GdkRectangle *monitor_geo)
-{
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
 	GdkScreen *screen = gdk_screen_get_default ();
 	gtk_window_fullscreen_on_monitor (GTK_WINDOW (win), screen, 0);
-	GdkWindow *w = gdk_screen_get_active_window (screen);
-	gint m = gdk_screen_get_monitor_at_window (screen, w);
-	gdk_screen_get_monitor_geometry (screen, m, monitor_geo);
 	GFile *cssfile = g_file_new_for_path ("photobooth.css");
 	if (cssfile)
 	{
@@ -67,16 +60,16 @@ void photo_booth_window_setup (PhotoBoothWindow *win, GdkRectangle *monitor_geo)
 	}
 }
 
-void photo_booth_window_add_drawing_area (PhotoBoothWindow *win, GtkWidget *drawing_area)
+void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkgstwidget)
 {
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
-	gtk_container_add (GTK_CONTAINER (priv->overlay), drawing_area);
-	gtk_widget_add_events (drawing_area, GDK_BUTTON_PRESS_MASK);
-	gtk_widget_realize (drawing_area);
-	gtk_widget_show (drawing_area);
+	gtk_container_add (GTK_CONTAINER (priv->overlay), gtkgstwidget);
+	gtk_widget_add_events (gtkgstwidget, GDK_BUTTON_PRESS_MASK);
+	gtk_widget_realize (gtkgstwidget);
+	gtk_widget_show (gtkgstwidget);
 	gtk_widget_show (priv->overlay);
-	priv->drawing_area = drawing_area;
+	win->gtkgstwidget = gtkgstwidget;
 }
 
 void photo_booth_window_set_spinner (PhotoBoothWindow *win, gboolean active)

@@ -1,8 +1,7 @@
-#include "samples.h"
-
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <gphoto2/gphoto2-camera.h>
 
 /*
  * This function looks up a label or key entry of
