@@ -80,6 +80,9 @@ typedef enum
 	PB_STATE_PRINTING
 } PhotoboothState;
 
+#define STRINGS_FILE "strings.ini"
+GHashTable *G_strings_table;
+#define _(key) (g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
 
 #define PHOTO_BOOTH_TYPE                (photo_booth_get_type ())
 #define PHOTO_BOOTH(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),PHOTO_BOOTH_TYPE,PhotoBooth))

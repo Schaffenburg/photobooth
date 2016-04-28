@@ -119,7 +119,7 @@ gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
 	GST_DEBUG ("_pbw_tick_countdown %i", priv->countdown);
 	if (priv->countdown > 0)
 	{
-		gchar *status_str = g_strdup_printf ("Taking photo in %d seconds...", priv->countdown);
+		gchar *status_str = g_strdup_printf (_("Taking photo in %d seconds..."), priv->countdown);
 		gtk_label_set_text (win->status, status_str);
 		str = g_strdup_printf ("%d...", priv->countdown);
 		gtk_label_set_text (priv->countdown_label, str);
@@ -127,7 +127,7 @@ gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
 	}
 	else if (priv->countdown == 0)
 	{
-		gtk_label_set_text (priv->countdown_label, "SAY CHEESE!");
+		gtk_label_set_text (priv->countdown_label, _("SAY CHEESE!"));
 	}
 	else if (priv->countdown == -1)
 	{

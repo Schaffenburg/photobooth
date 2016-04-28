@@ -77,6 +77,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win);
 
 /* general private functions */
+static void photo_booth_load_strings ();
 static void photo_booth_quit_signal (PhotoBooth *pb);
 static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb);
 static void photo_booth_setup_window (PhotoBooth *pb);
@@ -172,6 +173,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	}
 
 	priv->capture_thread = NULL;
+	photo_booth_load_strings();
 }
 
 static void photo_booth_setup_window (PhotoBooth *pb)
@@ -222,6 +224,43 @@ static void photo_booth_dispose (GObject *object)
 	priv = photo_booth_get_instance_private (PHOTO_BOOTH (object));
 	g_free (priv->printer_backend);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
+}
+
+static void photo_booth_load_strings ()
+{
+	GKeyFile* gkf;
+	GError *error = NULL;
+	guint group, keyidx;
+	gsize num_groups, num_keys;
+        gchar **groups, **keys, *val;
+	gchar *key;
+	gchar *value;
+
+	G_strings_table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+	gkf = g_key_file_new();
+
+	if (g_key_file_load_from_file(gkf, STRINGS_FILE, G_KEY_FILE_NONE, &error))
+	{
+		groups = g_key_file_get_groups(gkf, &num_groups);
+		for (group = 0; group < num_groups; group++)
+		{
+			GST_INFO("group %u/%u: \t%s", group, num_groups - 1, groups[group]);
+			keys = g_key_file_get_keys (gkf, groups[group], &num_keys, &error);
+			for (keyidx = 0; keyidx < num_keys; keyidx++)
+			{
+				val = g_key_file_get_value(gkf, groups[group], keys[keyidx], &error);
+				key = g_strdup(keys[keyidx]);
+				value = g_strdup(val);
+				g_hash_table_insert (G_strings_table, key, value);
+				GST_LOG ("key %u/%u:\t'%s' => '%s'", keyidx, num_keys-1, key, value);
+			}
+		}
+	}
+	if (error)
+	{
+		GST_INFO ( "can't read strings lookup file %s: %s", STRINGS_FILE, error->message);
+		g_error_free (error);
+	}
 }
 
 static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, void *data)
@@ -373,7 +412,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
 			}
 			else {
-				gtk_label_set_text (priv->win->status, "no camera connected!");
+				gtk_label_set_text (priv->win->status, _("No camera connected!"));
 				GST_INFO_OBJECT (pb, "no camera info.");
 			}
 			timeout = 5000;
@@ -425,7 +464,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		{
 			if (pb->cam_info)
 			{
-				gtk_label_set_text (priv->win->status, "taking photo...");
+				gtk_label_set_text (priv->win->status, _("Taking photo..."));
 				ret = photo_booth_take_photo (pb->cam_info);
 				if (ret)
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
@@ -771,7 +810,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
 	GST_DEBUG_OBJECT (pb, "photo_booth_preview done");
 	pb->state = PB_STATE_PREVIEW;
-	gtk_label_set_text (priv->win->status, "camera ready, showing preview video");
+	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	return FALSE;
 }
 
@@ -829,11 +868,11 @@ static void photo_booth_get_printer_status (PhotoBooth *pb)
 				gchar *size = g_match_info_fetch_named(match_info, "size");
 				remain = atoi(g_match_info_fetch_named(match_info, "remain"));
 				guint total = atoi(g_match_info_fetch_named(match_info, "total"));
-				label_string = g_strdup_printf("printer %s online. media (%s) %i prints remaining", priv->printer_backend, size, remain);
+				label_string = g_strdup_printf(_("Printer %s online. %i prints (%s) remaining"), priv->printer_backend, remain, size);
 				GST_INFO_OBJECT (pb, "printer %s status: media code %i (%s) prints remaining %i of %i", priv->printer_backend, code, size, remain, total);
 			}
 			else {
-				label_string = g_strdup_printf("can't parse printer backend output");
+				label_string = g_strdup_printf(_("Can't parse printer backend output"));
 				GST_ERROR_OBJECT (pb, "%s: '%s'", label_string, output);
 			}
 		}
@@ -842,11 +881,11 @@ static void photo_booth_get_printer_status (PhotoBooth *pb)
 			regex = g_regex_new ("ERROR: Printer open failure", G_REGEX_MULTILINE|G_REGEX_DOTALL, 0, &error);
 			if (g_regex_match (regex, output, 0, &match_info))
 			{
-				label_string = g_strdup_printf("printer %s off-line", priv->printer_backend);
+				label_string = g_strdup_printf(_("Printer %s off-line"), priv->printer_backend);
 				GST_WARNING_OBJECT (pb, "%s", label_string);
 			}
 			else {
-				label_string = g_strdup_printf("can't parse printer backend output");
+				label_string = g_strdup_printf(_("can't parse printer backend output"));
 				GST_ERROR_OBJECT (pb, "%s: '%s'", label_string, output);
 			}
 		}
@@ -855,7 +894,7 @@ static void photo_booth_get_printer_status (PhotoBooth *pb)
 		g_regex_unref (regex);
 	}
 	else {
-		label_string = g_strdup_printf("can't spawn %s", argv[0]);
+		label_string = g_strdup_printf(_("Can't spawn %s"), argv[0]);
 		GST_ERROR_OBJECT (pb, "%s  %s %s (%s)", label_string, argv[1], envp[0], error->message);
 		g_error_free (error);
 	}
@@ -1010,7 +1049,7 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	GstPad *pad;
 
 	GST_INFO_OBJECT (pb, "photo_booth_snapshot_taken size=%lu", pb->cam_info->size);
-	gtk_label_set_text (priv->win->status, "processing photo...");
+	gtk_label_set_text (priv->win->status, _("Processing photo..."));
 
 	appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
 	buffer = gst_buffer_new_wrapped (pb->cam_info->data, pb->cam_info->size);
@@ -1043,7 +1082,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		photo_booth_window_set_spinner (priv->win, FALSE);
 		GST_INFO_OBJECT (priv->win->button_yes, "PB_STATE_TAKING_PHOTO -> PB_STATE_PROCESS_PHOTO. hide spinner, show button");
 		gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
-		gtk_label_set_text (priv->win->status, "Print Photo? Touch background to cancel!");
+		gtk_label_set_text (priv->win->status, _("Print Photo? Touch background to cancel!"));
 		return GST_PAD_PROBE_PASS;
 	}
 	if (pb->state == PB_STATE_PROCESS_PHOTO)
@@ -1116,10 +1155,10 @@ static void photo_booth_print (PhotoBooth *pb)
 		gtk_label_set_text (priv->win->status, "PRINTING................");
 	}
 	else if (priv->prints_remaining == -1) {
-		gtk_label_set_text (priv->win->status, "can't print... no printer connected!!!");
+		gtk_label_set_text (priv->win->status, _("Can't print, no printer connected!"));
 	}
 	else
-		gtk_label_set_text (priv->win->status, "can't print... out of paper!!!");
+		gtk_label_set_text (priv->win->status, _("Can't print, out of paper!"));
 }
 
 PhotoBooth *photo_booth_new (void)
