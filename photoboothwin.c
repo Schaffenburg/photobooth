@@ -14,7 +14,7 @@
  */
 
 #include <gtk/gtk.h>
-
+#include <time.h>
 #include "photobooth.h"
 #include "photoboothwin.h"
 
@@ -33,6 +33,9 @@ G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLI
 GST_DEBUG_CATEGORY_STATIC (photo_booth_windows_debug);
 #define GST_CAT_DEFAULT photo_booth_windows_debug
 
+gboolean _pbw_tick_countdown (PhotoBoothWindow *win);
+gboolean _pbw_clock_tick (GtkLabel *status_clock);
+
 static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 {
 	GST_DEBUG_CATEGORY_INIT (photo_booth_windows_debug, "photoboothwin", GST_DEBUG_BOLD | GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLUE, "PhotoBoothWindow");
@@ -41,6 +44,9 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_yes);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_clock);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_printer);
 }
 
 static void photo_booth_window_init (PhotoBoothWindow *win)
@@ -58,6 +64,7 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 		gtk_style_context_add_provider_for_screen (screen, (GtkStyleProvider *)cssprovider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 		g_object_unref (cssfile);
 	}
+	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }
 
 void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkgstwidget)
@@ -70,6 +77,21 @@ void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkg
 	gtk_widget_show (gtkgstwidget);
 	gtk_widget_show (priv->overlay);
 	win->gtkgstwidget = gtkgstwidget;
+}
+
+gboolean _pbw_clock_tick (GtkLabel *status_clock)
+{
+	gchar clockstr[200];
+	time_t now;
+	struct tm *now_tm;
+	time (&now);
+	now_tm = localtime (&now);
+	if (!now_tm)
+		return TRUE;
+	if (strftime(clockstr, sizeof(clockstr), "%A, %d. %B %Y\t%T", now_tm) == 0)
+		return TRUE;
+	gtk_label_set_text (status_clock, clockstr);
+	return TRUE;
 }
 
 void photo_booth_window_set_spinner (PhotoBoothWindow *win, gboolean active)
@@ -97,6 +119,8 @@ gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
 	GST_DEBUG ("_pbw_tick_countdown %i", priv->countdown);
 	if (priv->countdown > 0)
 	{
+		gchar *status_str = g_strdup_printf ("Taking photo in %d seconds...", priv->countdown);
+		gtk_label_set_text (win->status, status_str);
 		str = g_strdup_printf ("%d...", priv->countdown);
 		gtk_label_set_text (priv->countdown_label, str);
 		g_free (str);

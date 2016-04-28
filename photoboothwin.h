@@ -35,6 +35,7 @@ struct _PhotoBoothWindow
 	GtkApplicationWindow parent;
 	GtkWidget *gtkgstwidget;
 	GtkButton *button_yes;
+	GtkLabel *status_clock, *status, *status_printer;
 };
 
 struct _PhotoBoothWindowClass

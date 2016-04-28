@@ -13,8 +13,6 @@
  * distributed other than under the conditions noted above.
  */
 
-// gcc -Wall -g `pkg-config gstreamer-1.0 gstreamer-video-1.0 libgphoto2 gtk+-3.0 gtk+-x11-3.0 --cflags --libs` photobooth.c focus.c -o photobooth
-
 #include <poll.h>
 #include <string.h>
 #include <stdlib.h>
@@ -37,14 +35,17 @@ typedef struct _PhotoBoothPrivate PhotoBoothPrivate;
 struct _PhotoBoothPrivate
 {
 	PhotoBoothWindow *win;
-	GSettings *settings;
-	guint countdown;
+	guint32 countdown;
+	gchar *printer_backend;
+	gint prints_remaining;
 	GstElement *audio_playbin;
 	GstVideoRectangle video_size;
+	GThread *capture_thread;
 };
 
 #define DEFAULT_AUDIOFILE_COUNTDOWN "/net/home/fraxinas/microcontroller/photobooth/beep.m4a"
 #define DEFAULT_COUNTDOWN 5
+#define DEFAULT_PRINTER_BACKEND "mitsu9550"
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
 #define PREVIEW_WIDTH 640
@@ -55,6 +56,8 @@ enum
 {
 	ARG_0,
 	ARG_COUNTDOWN,
+	ARG_PRINTER_BACKEND,
+	ARG_PRINTS_REMAINING,
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION);
@@ -82,6 +85,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb);
 static void photo_booth_snapshot_start (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
+static void photo_booth_get_printer_status (PhotoBooth *pb);
 static void photo_booth_print (PhotoBooth *pb);
 
 /* libgphoto2 */
@@ -108,15 +112,25 @@ static void photo_booth_class_init (PhotoBoothClass *klass)
 	GST_DEBUG ("photo_booth_class_init");
 	gp_log_add_func(GP_LOG_ERROR, _gphoto_err, NULL);
 
-	gobject_class->finalize = photo_booth_finalize;
-	gobject_class->set_property = photo_booth_set_property;
-	gobject_class->get_property = photo_booth_get_property;
+	gobject_class->finalize      = photo_booth_finalize;
+	gobject_class->dispose       = photo_booth_dispose;
+	gobject_class->set_property  = photo_booth_set_property;
+	gobject_class->get_property  = photo_booth_get_property;
 	gapplication_class->activate = photo_booth_activate;
-	gapplication_class->open = photo_booth_open;
+	gapplication_class->open     = photo_booth_open;
+
 	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_COUNTDOWN,
 	  g_param_spec_uint ("countdown", "Shutter delay (s)",
-	    "Shutter actuation delay countdown in seconds", 0, 60, DEFAULT_COUNTDOWN,
+	    "Specify shutter actuation delay countdown in seconds", 0, 60, DEFAULT_COUNTDOWN,
 	    G_PARAM_CONSTRUCT | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_PRINTER_BACKEND,
+	  g_param_spec_string ("printer-backend", "Gutenprint backend",
+	    "Specify which Gutenprint backend to use", DEFAULT_PRINTER_BACKEND,
+	    G_PARAM_CONSTRUCT | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_PRINTS_REMAINING,
+	  g_param_spec_int ("prints-remaining", "Print media remaining",
+	    "Show remaining prints on media roll (-1 = Unknown)", -1, 1000, -1,
+	    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 }
 
 static void photo_booth_init (PhotoBooth *pb)
@@ -157,10 +171,7 @@ static void photo_booth_init (PhotoBooth *pb)
 		g_application_quit (G_APPLICATION (pb));
 	}
 
-	pb->capture_thread = NULL;
-	pb->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
-
-	priv->settings = NULL;
+	priv->capture_thread = NULL;
 }
 
 static void photo_booth_setup_window (PhotoBooth *pb)
@@ -170,7 +181,9 @@ static void photo_booth_setup_window (PhotoBooth *pb)
 	priv->win = photo_booth_window_new (pb);
 	gtk_window_present (GTK_WINDOW (priv->win));
 	g_signal_connect (G_OBJECT (priv->win), "destroy", G_CALLBACK (photo_booth_window_destroyed_signal), pb);
+	priv->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
 	photo_booth_setup_gstreamer (pb);
+	photo_booth_get_printer_status (pb);
 }
 
 static void photo_booth_activate (GApplication *app)
@@ -188,10 +201,12 @@ static void photo_booth_open (GApplication  *app, GFile **files, gint n_files, c
 static void photo_booth_finalize (GObject *object)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (object);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+
 	GST_INFO_OBJECT (pb, "finalize");
 	SEND_COMMAND (pb, CONTROL_STOP);
 	photo_booth_flush_pipe (pb->video_fd);
-	g_thread_join (pb->capture_thread);
+	g_thread_join (priv->capture_thread);
 	if (pb->cam_info)
 		photo_booth_cam_close (&pb->cam_info);
 	if (pb->video_fd)
@@ -205,7 +220,7 @@ static void photo_booth_dispose (GObject *object)
 {
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (PHOTO_BOOTH (object));
-	g_clear_object (&priv->settings);
+	g_free (priv->printer_backend);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
 }
 
@@ -295,6 +310,9 @@ static void photo_booth_set_property (GObject * object, guint prop_id, const GVa
 		case ARG_COUNTDOWN:
 			priv->countdown = g_value_get_uint (value);
 			break;
+		case ARG_PRINTER_BACKEND:
+			priv->printer_backend = g_strdup (g_value_get_string (value));
+			break;
 		default:
 			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 			break;
@@ -308,7 +326,13 @@ static void photo_booth_get_property (GObject * object, guint prop_id, GValue * 
 
 	switch (prop_id) {
 		case ARG_COUNTDOWN:
-			g_value_set_int (value, priv->countdown);
+			g_value_set_uint (value, priv->countdown);
+			break;
+		case ARG_PRINTER_BACKEND:
+			g_value_set_string (value, priv->printer_backend);
+			break;
+		case ARG_PRINTS_REMAINING:
+			g_value_set_int (value, priv->prints_remaining);
 			break;
 		default:
 			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -319,11 +343,11 @@ static void photo_booth_get_property (GObject * object, guint prop_id, GValue * 
 static void photo_booth_capture_thread_func (PhotoBooth *pb)
 {
 	PhotoboothCaptureThreadState state = CAPTURE_INIT;
-
-	GST_DEBUG_OBJECT (pb, "enter capture thread fd = %d", pb->video_fd);
-
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	CameraFile *gp_file = NULL;
 	int gpret, captured_frames = 0;
+
+	GST_DEBUG_OBJECT (pb, "enter capture thread fd = %d", pb->video_fd);
 
 	if (gp_file_new_from_fd (&gp_file, pb->video_fd) != GP_OK)
 	{
@@ -348,8 +372,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				state = CAPTURE_VIDEO;
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
 			}
-			else
+			else {
+				gtk_label_set_text (priv->win->status, "no camera connected!");
 				GST_INFO_OBJECT (pb, "no camera info.");
+			}
 			timeout = 5000;
 		}
 		else if (state == CAPTURE_PAUSED)
@@ -399,11 +425,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		{
 			if (pb->cam_info)
 			{
+				gtk_label_set_text (priv->win->status, "taking photo...");
 				ret = photo_booth_take_photo (pb->cam_info);
 				if (ret)
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
-				else
-				{
+				else {
 					GST_ERROR_OBJECT (pb, "taking photo failed!");
 					state = CAPTURE_INIT;
 				}
@@ -656,7 +682,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			GstStateChange transition = (GstStateChange)GST_STATE_TRANSITION (old_state, new_state);
 			GstElement *src = GST_ELEMENT (GST_MESSAGE_SRC (message));
 			GST_LOG ("%" GST_PTR_FORMAT " state transition %s -> %s", src, gst_element_state_get_name(GST_STATE_TRANSITION_CURRENT(transition)), gst_element_state_get_name(GST_STATE_TRANSITION_NEXT(transition)));
-			if (src == pb->video_bin && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING)
+			if (src == pb->video_bin && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING && pb->state != PB_STATE_WAITING_FOR_ANSWER)
 			{
 				GST_DEBUG ("video_bin GST_STATE_CHANGE_READY_TO_PAUSED -> CAPTURE VIDEO!");
 				SEND_COMMAND (pb, CONTROL_VIDEO);
@@ -678,9 +704,6 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		case GST_MESSAGE_STREAM_START:
 		{
 			GST_DEBUG ("GST_MESSAGE_STREAM_START! state=%i", pb->state);
-// 			if (pb->state == PB_STATE_ASKING)
-// 			{
-// 			}
 		}
 		default:
 		{
@@ -727,6 +750,7 @@ static void photo_booth_video_widget_ready (PhotoBooth *pb)
 
 static gboolean photo_booth_preview (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	GstPad *pad;
 	if (pb->video_block_id)
 	{
@@ -747,6 +771,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
 	GST_DEBUG_OBJECT (pb, "photo_booth_preview done");
 	pb->state = PB_STATE_PREVIEW;
+	gtk_label_set_text (priv->win->status, "camera ready, showing preview video");
 	return FALSE;
 }
 
@@ -754,8 +779,6 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 {
 	PhotoBoothPrivate *priv;
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
-	GST_DEBUG_OBJECT (widget, "photo_booth_background_clicked state=%d", pb->state);
-
 	switch (pb->state) {
 		case PB_STATE_PREVIEW:
 		{
@@ -775,6 +798,72 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		default:
 			break;
 	}
+}
+
+static void photo_booth_get_printer_status (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	gchar *label_string;
+	gchar *backend_environment = g_strdup_printf ("BACKEND=%s", priv->printer_backend);
+	gchar *argv[] = { "/usr/lib/cups/backend/gutenprint52+usb", "-m", NULL };
+	gchar *envp[] = { backend_environment, NULL };
+	gchar *output = NULL;
+	GError *error = NULL;
+	gint remain = -1;
+	gint ret = 0;
+
+	if (g_spawn_sync (NULL, argv, envp, G_SPAWN_DEFAULT, NULL, NULL, NULL, &output, &ret, &error))
+	{
+		GMatchInfo *match_info;
+		GRegex *regex;
+		if (ret == 0)
+		{
+			regex = g_regex_new ("INFO: Media type\\s.*?: (?<code>\\d+) \\((?<size>.*?)\\)\nINFO: Media remaining\\s.*?: (?<remain>\\d{3})/(?<total>\\d{3})\n", G_REGEX_MULTILINE|G_REGEX_DOTALL, 0, &error);
+			if (error) {
+				g_critical ("%s\n", error->message);
+				return;
+			}
+			if (g_regex_match (regex, output, 0, &match_info))
+			{
+				guint code = atoi(g_match_info_fetch_named(match_info, "code"));
+				gchar *size = g_match_info_fetch_named(match_info, "size");
+				remain = atoi(g_match_info_fetch_named(match_info, "remain"));
+				guint total = atoi(g_match_info_fetch_named(match_info, "total"));
+				label_string = g_strdup_printf("printer %s online. media (%s) %i prints remaining", priv->printer_backend, size, remain);
+				GST_INFO_OBJECT (pb, "printer %s status: media code %i (%s) prints remaining %i of %i", priv->printer_backend, code, size, remain, total);
+			}
+			else {
+				label_string = g_strdup_printf("can't parse printer backend output");
+				GST_ERROR_OBJECT (pb, "%s: '%s'", label_string, output);
+			}
+		}
+		else
+		{
+			regex = g_regex_new ("ERROR: Printer open failure", G_REGEX_MULTILINE|G_REGEX_DOTALL, 0, &error);
+			if (g_regex_match (regex, output, 0, &match_info))
+			{
+				label_string = g_strdup_printf("printer %s off-line", priv->printer_backend);
+				GST_WARNING_OBJECT (pb, "%s", label_string);
+			}
+			else {
+				label_string = g_strdup_printf("can't parse printer backend output");
+				GST_ERROR_OBJECT (pb, "%s: '%s'", label_string, output);
+			}
+		}
+		g_free (output);
+		g_match_info_free (match_info);
+		g_regex_unref (regex);
+	}
+	else {
+		label_string = g_strdup_printf("can't spawn %s", argv[0]);
+		GST_ERROR_OBJECT (pb, "%s  %s %s (%s)", label_string, argv[1], envp[0], error->message);
+		g_error_free (error);
+	}
+	priv->prints_remaining = remain;
+	gtk_label_set_text (priv->win->status_printer, label_string);
+	g_free (label_string);
+	g_free (backend_environment);
+	return;
 }
 
 static void photo_booth_snapshot_start (PhotoBooth *pb)
@@ -914,12 +1003,14 @@ static gboolean photo_booth_take_photo (CameraInfo *cam_info)
 
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	GstElement *appsrc;
 	GstBuffer *buffer;
 	GstFlowReturn flowret;
 	GstPad *pad;
 
 	GST_INFO_OBJECT (pb, "photo_booth_snapshot_taken size=%lu", pb->cam_info->size);
+	gtk_label_set_text (priv->win->status, "processing photo...");
 
 	appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
 	buffer = gst_buffer_new_wrapped (pb->cam_info->data, pb->cam_info->size);
@@ -928,7 +1019,6 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	if (flowret != GST_FLOW_OK)
 		GST_ERROR_OBJECT (appsrc, "couldn't push %" GST_PTR_FORMAT " to appsrc", buffer);
 	gst_object_unref (appsrc);
-	GST_INFO_OBJECT (pb, "photo_booth_snapshot now waiting for user input... PB_STATE_ASKING");
 
 	SEND_COMMAND (pb, CONTROL_PAUSE);
 
@@ -953,7 +1043,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		photo_booth_window_set_spinner (priv->win, FALSE);
 		GST_INFO_OBJECT (priv->win->button_yes, "PB_STATE_TAKING_PHOTO -> PB_STATE_PROCESS_PHOTO. hide spinner, show button");
 		gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
-
+		gtk_label_set_text (priv->win->status, "Print Photo? Touch background to cancel!");
 		return GST_PAD_PROBE_PASS;
 	}
 	if (pb->state == PB_STATE_PROCESS_PHOTO)
@@ -1014,10 +1104,22 @@ void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win)
 static void photo_booth_print (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GST_DEBUG_OBJECT (pb, "!!!PRINT!!!");
 	priv = photo_booth_get_instance_private (pb);
-	gtk_widget_hide  (GTK_WIDGET (priv->win->button_yes));
 	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_photo_print.dot");
+	photo_booth_get_printer_status (pb);
+	GST_DEBUG_OBJECT (pb, "!!!PRINT!!! prints_remaining=%i", priv->prints_remaining);
+
+	if (priv->prints_remaining > 1)
+	{
+		priv = photo_booth_get_instance_private (pb);
+		gtk_widget_hide  (GTK_WIDGET (priv->win->button_yes));
+		gtk_label_set_text (priv->win->status, "PRINTING................");
+	}
+	else if (priv->prints_remaining == -1) {
+		gtk_label_set_text (priv->win->status, "can't print... no printer connected!!!");
+	}
+	else
+		gtk_label_set_text (priv->win->status, "can't print... out of paper!!!");
 }
 
 PhotoBooth *photo_booth_new (void)
@@ -1033,7 +1135,7 @@ int main (int argc, char *argv[])
 	PhotoBooth *pb;
 	int ret;
 
-	gst_init (&argc, &argv);
+	gst_init (0, NULL);
 
 	pb = photo_booth_new ();
 

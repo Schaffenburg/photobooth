@@ -110,7 +110,6 @@ struct _PhotoBooth
 	gulong photo_block_id;
 
 	int control_sock[2];
-	GThread *capture_thread;
 	PhotoboothState state;
 };
 

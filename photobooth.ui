@@ -13,15 +13,12 @@
         <property name="can_focus">False</property>
         <property name="events">GDK_BUTTON_PRESS_MASK</property>
         <signal name="button-press-event" handler="photo_booth_background_clicked" swapped="no"/>
-        <child>
-          <placeholder/>
-        </child>
         <child type="overlay">
           <object class="GtkLabel" id="countdown_label">
             <property name="width_request">400</property>
             <property name="height_request">300</property>
             <property name="can_focus">False</property>
-            <property name="opacity">0.9</property>
+            <property name="opacity">0.90000000000000002</property>
             <property name="halign">center</property>
             <property name="valign">center</property>
             <property name="label" translatable="yes">label</property>
@@ -34,26 +31,6 @@
             <style>
               <class name="transparentbg"/>
               <class name="countdown_label"/>
-            </style>
-          </object>
-          <packing>
-            <property name="index">1</property>
-          </packing>
-        </child>
-        <child type="overlay">
-          <object class="GtkSpinner" id="spinner">
-            <property name="width_request">200</property>
-            <property name="height_request">200</property>
-            <property name="visible">True</property>
-            <property name="can_focus">False</property>
-            <property name="opacity">0.8</property>
-            <property name="halign">center</property>
-            <property name="valign">center</property>
-            <property name="hexpand">False</property>
-            <property name="vexpand">False</property>
-            <property name="active">True</property>
-            <style>
-              <class name="transparentbg"/>
             </style>
           </object>
           <packing>
@@ -89,7 +66,103 @@
           </object>
           <packing>
             <property name="pass_through">True</property>
-            <property name="index">2</property>
+            <property name="index">3</property>
+          </packing>
+        </child>
+        <child type="overlay">
+          <object class="GtkBox" id="statusbox">
+            <property name="name">statusbox</property>
+            <property name="width_request">800</property>
+            <property name="height_request">40</property>
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="valign">end</property>
+            <property name="margin_left">10</property>
+            <property name="margin_right">10</property>
+            <property name="margin_bottom">10</property>
+            <property name="homogeneous">True</property>
+            <property name="baseline_position">bottom</property>
+            <child>
+              <object class="GtkLabel" id="status_clock">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="halign">start</property>
+                <property name="valign">center</property>
+                <property name="label" translatable="yes">label</property>
+                <property name="single_line_mode">True</property>
+                <property name="track_visited_links">False</property>
+                <style>
+                  <class name="status_label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="status">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="halign">center</property>
+                <property name="valign">center</property>
+                <property name="label" translatable="yes">label</property>
+                <property name="justify">center</property>
+                <style>
+                  <class name="status_label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="status_printer">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="halign">end</property>
+                <property name="valign">center</property>
+                <property name="label" translatable="yes">label</property>
+                <property name="justify">right</property>
+                <style>
+                  <class name="status_label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">2</property>
+              </packing>
+            </child>
+            <style>
+              <class name="statusbox"/>
+            </style>
+          </object>
+          <packing>
+            <property name="index">3</property>
+          </packing>
+        </child>
+        <child type="overlay">
+          <object class="GtkSpinner" id="spinner">
+            <property name="width_request">200</property>
+            <property name="height_request">200</property>
+            <property name="visible">True</property>
+            <property name="can_focus">False</property>
+            <property name="opacity">0.80000000000000004</property>
+            <property name="halign">center</property>
+            <property name="valign">center</property>
+            <property name="hexpand">False</property>
+            <property name="vexpand">False</property>
+            <property name="active">True</property>
+            <style>
+              <class name="transparentbg"/>
+            </style>
+          </object>
+          <packing>
+            <property name="index">9</property>
           </packing>
         </child>
         <style>
