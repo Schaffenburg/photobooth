@@ -816,8 +816,8 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win)
 {
-	PhotoBoothPrivate *priv;
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	switch (pb->state) {
 		case PB_STATE_PREVIEW:
 		{
@@ -829,7 +829,6 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 			break;
 		case PB_STATE_WAITING_FOR_ANSWER:
 		{
-			priv = photo_booth_get_instance_private (pb);
 			gtk_widget_hide  (GTK_WIDGET (priv->win->button_yes));
 			photo_booth_preview (pb);
 			break;
@@ -837,6 +836,8 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		default:
 			break;
 	}
+	if (priv->prints_remaining < 1)
+		photo_booth_get_printer_status (pb);
 }
 
 static void photo_booth_get_printer_status (PhotoBooth *pb)
