@@ -238,7 +238,8 @@ static void photo_booth_dispose (GObject *object)
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (PHOTO_BOOTH (object));
 	g_free (priv->printer_backend);
-	g_object_unref (priv->printer_settings);
+	if (priv->printer_settings != NULL)
+		g_object_unref (priv->printer_settings);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
 }
 
@@ -483,13 +484,17 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				gtk_label_set_text (priv->win->status, _("Taking photo..."));
 				ret = photo_booth_take_photo (pb->cam_info);
 				if (ret)
+				{
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
+					photo_booth_cam_close (&pb->cam_info);
+					photo_booth_cam_init (&pb->cam_info);
+				}
 				else {
 					gtk_label_set_text (priv->win->status, _("Taking photo failed!"));
 					GST_ERROR_OBJECT (pb, "Taking photo failed!");
+					photo_booth_cam_close (&pb->cam_info);
 					pb->state = PB_STATE_NONE;
 					state = CAPTURE_INIT;
-					photo_booth_cam_close (&pb->cam_info);
 				}
 			}
 		}
@@ -592,7 +597,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 static GstElement *build_photo_bin (PhotoBooth *pb)
 {
 	GstElement *photo_bin;
-	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_tee;
+	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_tee;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -612,17 +617,18 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	g_object_set (photo_overlay, "overlay-width", PRINT_WIDTH, NULL);
 	g_object_set (photo_overlay, "overlay-height", PRINT_HEIGHT, NULL);
 
+	photo_convert = gst_element_factory_make ("videoconvert", "photo-convert");
 	photo_tee = gst_element_factory_make ("tee", "photo-tee");
 
-	if (!(photo_bin && photo_source && photo_decoder && photo_freeze && photo_scale && photo_filter, photo_overlay, photo_tee))
+	if (!(photo_bin && photo_source && photo_decoder && photo_freeze && photo_scale && photo_filter, photo_overlay && photo_convert && photo_tee))
 	{
 		GST_ERROR_OBJECT (photo_bin, "Failed to make photobin pipeline element(s)");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_tee, NULL);
+	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_tee, NULL);
 
-	if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_tee, NULL))
+	if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_tee, NULL))
 	{
 		GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
 		return FALSE;
@@ -640,7 +646,7 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstBus *bus;
-	GstElement *video_convert, *video_sink;
+	GstElement *video_sink;
 	GtkWidget *gtkgstwidget;
 	GstPad *ghost, *pad;
 
@@ -652,24 +658,16 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 
 	pb->pipeline = gst_pipeline_new ("photobooth-pipeline");
 
-	video_convert = gst_element_factory_make ("videoconvert", "output-videoconvert");
-
 	video_sink = gst_element_factory_make ("gtksink", NULL);
 // 	g_object_set (pb->video_sink, "sync", FALSE, NULL);
 
-	if (!(video_convert && video_sink))
+	if (!(video_sink))
 	{
-		GST_ERROR_OBJECT (pb, "Failed to create pipeline element(s):%s%s", video_convert?"":" videoconvert", video_sink?"":" gtksink");
+		GST_ERROR_OBJECT (pb, "Failed to create gtksink");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (pb->output_bin), video_convert, video_sink, NULL);
-
-	if (!gst_element_link (video_convert, video_sink))
-	{
-		GST_ERROR_OBJECT (pb, "couldn't link elements!");
-		return FALSE;
-	}
+	gst_bin_add (GST_BIN (pb->output_bin), video_sink);
 
 	g_object_get (video_sink, "widget", &gtkgstwidget, NULL);
 	photo_booth_window_add_gtkgstwidget (priv->win, gtkgstwidget);
@@ -678,7 +676,7 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	gst_element_set_state (pb->pipeline, GST_STATE_PLAYING);
 	gst_element_set_state (pb->output_bin, GST_STATE_PLAYING);
 
-	pad = gst_element_get_static_pad (video_convert, "sink");
+	pad = gst_element_get_static_pad (video_sink, "sink");
 	ghost = gst_ghost_pad_new ("sink", pad);
 	gst_object_unref (pad);
 	gst_pad_set_active (ghost, TRUE);
@@ -1102,8 +1100,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
-	GstElement *tee, *encoder, *filesink, *convert, *filter, *appsink;
-	GstCaps *caps;
+	GstElement *tee, *encoder, *filesink, *appsink;
 
 	priv = photo_booth_get_instance_private (pb);
 
@@ -1139,24 +1136,19 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		if (!gst_element_link_many (tee, encoder, filesink, NULL))
 			GST_ERROR_OBJECT (pb->photo_bin, "couldn't link photobin filewrite elements!");
 
-		GST_DEBUG_OBJECT (pb, "PB_STATE_PROCESS_PHOTO -> PB_STATE_WAITING_FOR_ANSWER. insert print surface converter elements");
-		convert = gst_element_factory_make ("videoconvert", "print-videoconvert");
-		filter = gst_element_factory_make ("capsfilter", "print-capsfilter");
+		GST_DEBUG_OBJECT (pb, "PB_STATE_PROCESS_PHOTO -> PB_STATE_WAITING_FOR_ANSWER. insert print surface sink");
 		appsink = gst_element_factory_make ("appsink", "print-appsink");
-		if (!convert || !filter || !appsink)
-			GST_ERROR_OBJECT (pb->photo_bin, "Failed to make print converters");
+		if (!appsink)
+			GST_ERROR_OBJECT (pb->photo_bin, "Failed to make appsink");
 
-		gst_bin_add_many (GST_BIN (pb->photo_bin), convert, filter, appsink, NULL);
-		caps = gst_caps_new_simple ("video/x-raw", "format", G_TYPE_STRING, "BGRx", NULL);
-		g_object_set (G_OBJECT (filter), "caps", caps, NULL);
+		gst_bin_add (GST_BIN (pb->photo_bin), appsink);
 		g_object_set (G_OBJECT (appsink), "emit-signals", TRUE, NULL);
 		g_object_set (G_OBJECT (appsink), "enable-last-sample", FALSE, NULL);
 		g_signal_connect (appsink, "new-sample", G_CALLBACK (photo_booth_catch_print_buffer), pb);
-		GST_DEBUG_OBJECT (pb->photo_bin, "linking elements %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT "", tee, convert, filter, appsink);
-		if (!gst_element_link_many (tee, convert, filter, appsink, NULL))
-			GST_ERROR_OBJECT (pb->photo_bin, "couldn't link print converter elements!");
+		GST_DEBUG_OBJECT (pb->photo_bin, "linking elements %" GST_PTR_FORMAT " ! %" GST_PTR_FORMAT "", tee, appsink);
+		if (!gst_element_link (tee, appsink))
+			GST_ERROR_OBJECT (pb->photo_bin, "couldn't link appsink!");
 
-		gst_caps_unref (caps);
 		gst_object_unref (tee);
 		gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 		GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_video_snapshot_taken.dot");
@@ -1169,22 +1161,16 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
 		encoder = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-encoder");
 		filesink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-filesink");
-		convert = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-videoconvert");
-		filter = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-capsfilter");
 		appsink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-appsink");
 		gst_element_unlink_many (tee, encoder, filesink, NULL);
-		gst_element_unlink_many (tee, convert, filter, appsink, NULL);
-		gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, convert, filter, appsink, NULL);
+		gst_element_unlink_many (tee, appsink, NULL);
+		gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, appsink, NULL);
 		gst_element_set_state (filesink, GST_STATE_NULL);
 		gst_element_set_state (encoder, GST_STATE_NULL);
-		gst_element_set_state (convert, GST_STATE_NULL);
-		gst_element_set_state (filter, GST_STATE_NULL);
 		gst_element_set_state (appsink, GST_STATE_NULL);
 		gst_object_unref (tee);
 		gst_object_unref (encoder);
 		gst_object_unref (filesink);
-		gst_object_unref (convert);
-		gst_object_unref (filter);
 		pb->photo_block_id = 0;
 		return GST_PAD_PROBE_REMOVE;
 	}
