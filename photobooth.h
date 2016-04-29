@@ -111,11 +111,7 @@ struct _PhotoBooth
 	gint timeout_id;
 	CameraInfo *cam_info;
 
-	gulong video_block_id;
-	gulong photo_block_id;
-
 	int control_sock[2];
-	PhotoboothState state;
 };
 
 struct _PhotoBoothClass
