@@ -116,7 +116,9 @@ static GstElement *build_photo_bin (PhotoBooth *pb);
 static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb);
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb);
 static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
+static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb);
 static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data);
+static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb);
 static void photo_booth_free_print_buffer (PhotoBooth *pb);
 
 /* printing functions */
@@ -1108,6 +1110,47 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	return FALSE;
 }
 
+static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+{
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
+	PhotoBoothPrivate *priv;
+	GstPadProbeReturn ret = GST_PAD_PROBE_PASS;
+	priv = photo_booth_get_instance_private (pb);
+
+	GST_LOG_OBJECT (pb, "probe function in state %s... locking", photo_booth_state_get_name (priv->state));
+	g_mutex_lock (&priv->processing_mutex);
+	switch (priv->state) {
+		case PB_STATE_TAKING_PHOTO:
+		{
+			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
+			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
+			gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
+			gtk_label_set_text (priv->win->status, _("Print Photo? Touch background to cancel!"));
+			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
+			break;
+		}
+		case PB_STATE_PROCESS_PHOTO:
+		{
+			photo_booth_change_state (pb, PB_STATE_WAITING_FOR_ANSWER);
+			GST_DEBUG_OBJECT (pb, "second buffer caught -> will be caught for printing. waiting for answer, hide spinner");
+			photo_booth_window_set_spinner (priv->win, FALSE);
+			break;
+		}
+		case PB_STATE_WAITING_FOR_ANSWER:
+		{
+			GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe");
+			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
+			ret = GST_PAD_PROBE_REMOVE;
+			break;
+		}
+		default:
+			break;
+	}
+	g_mutex_unlock (&priv->processing_mutex);
+	GST_LOG_OBJECT (pb, "probe function in state %s... unlocked", photo_booth_state_get_name (priv->state));
+	return ret;
+}
+
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
@@ -1150,6 +1193,29 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	return FALSE;
 }
 
+static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data)
+{
+	PhotoBooth *pb;
+	PhotoBoothPrivate *priv;
+	GstSample *sample;
+	GstMapInfo map;
+	GstPad *pad;
+
+	pb = PHOTO_BOOTH (user_data);
+	priv = photo_booth_get_instance_private (pb);
+	g_mutex_lock (&priv->processing_mutex);
+	sample = gst_app_sink_pull_sample (GST_APP_SINK (appsink));
+	priv->print_buffer = gst_buffer_ref( gst_sample_get_buffer (sample));
+
+	pad = gst_element_get_static_pad (appsink, "sink");
+	GstCaps *caps = gst_pad_get_current_caps (pad);
+	GST_DEBUG_OBJECT (pb, "got photo for printer: %" GST_PTR_FORMAT ". caps = %" GST_PTR_FORMAT "", priv->print_buffer, caps);
+	gst_caps_unref (caps);
+	gst_sample_unref (sample);
+	g_mutex_unlock (&priv->processing_mutex);
+	return GST_FLOW_OK;
+}
+
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
@@ -1178,70 +1244,6 @@ static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 	g_mutex_unlock (&priv->processing_mutex);
 	GST_DEBUG_OBJECT (pb, "removed output file encoder and writer elements and paused and unlocked.");
 	return FALSE;
-}
-
-static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
-{
-	PhotoBooth *pb = PHOTO_BOOTH (user_data);
-	PhotoBoothPrivate *priv;
-	GstPadProbeReturn ret = GST_PAD_PROBE_PASS;
-	priv = photo_booth_get_instance_private (pb);
-
-	GST_LOG_OBJECT (pb, "probe function in state %s... locking", photo_booth_state_get_name (priv->state));
-	g_mutex_lock (&priv->processing_mutex);
-	switch (priv->state) {
-		case PB_STATE_TAKING_PHOTO:
-		{
-			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
-			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
-			gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
-			gtk_label_set_text (priv->win->status, _("Print Photo? Touch background to cancel!"));
-			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
-			break;
-		}
-		case PB_STATE_PROCESS_PHOTO:
-		{
-			photo_booth_change_state (pb, PB_STATE_WAITING_FOR_ANSWER);
-			GST_DEBUG_OBJECT (pb, "second buffer caught -> will be caught for printing. waiting for answer, hide spinner");
-			photo_booth_window_set_spinner (priv->win, FALSE);
-			break;
-		}
-		case PB_STATE_WAITING_FOR_ANSWER:
-		{
-			GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe");
-			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
-			ret = GST_PAD_PROBE_REMOVE;
-			break;
-		}
-		default:
-			break;
-	}
-	g_mutex_unlock (&priv->processing_mutex);
-	GST_LOG_OBJECT (pb, "probe function in state %s... unlocked", photo_booth_state_get_name (priv->state));
-	return ret;
-}
-
-static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data)
-{
-	PhotoBooth *pb;
-	PhotoBoothPrivate *priv;
-	GstSample *sample;
-	GstMapInfo map;
-	GstPad *pad;
-
-	pb = PHOTO_BOOTH (user_data);
-	priv = photo_booth_get_instance_private (pb);
-	g_mutex_lock (&priv->processing_mutex);
-	sample = gst_app_sink_pull_sample (GST_APP_SINK (appsink));
-	priv->print_buffer = gst_buffer_ref( gst_sample_get_buffer (sample));
-
-	pad = gst_element_get_static_pad (appsink, "sink");
-	GstCaps *caps = gst_pad_get_current_caps (pad);
-	GST_DEBUG_OBJECT (pb, "got photo for printer: %" GST_PTR_FORMAT ". caps = %" GST_PTR_FORMAT "", priv->print_buffer, caps);
-	gst_caps_unref (caps);
-	gst_sample_unref (sample);
-	g_mutex_unlock (&priv->processing_mutex);
-	return GST_FLOW_OK;
 }
 
 static void photo_booth_free_print_buffer (PhotoBooth *pb)
