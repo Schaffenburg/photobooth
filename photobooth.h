@@ -51,6 +51,7 @@ G_STMT_START {                                 \
 G_BEGIN_DECLS
 
 #define PREVIEW_FPS 24
+#define PT_PER_IN 72
 
 struct _CameraInfo {
 	Camera *camera;
@@ -74,6 +75,7 @@ typedef enum
 {
 	PB_STATE_NONE = 0,
 	PB_STATE_PREVIEW,
+	PB_STATE_COUNTDOWN,
 	PB_STATE_TAKING_PHOTO,
 	PB_STATE_PROCESS_PHOTO,
 	PB_STATE_WAITING_FOR_ANSWER,
