@@ -64,6 +64,8 @@ struct _PhotoBoothPrivate
 #define PREVIEW_WIDTH 640
 #define PREVIEW_HEIGHT 424
 #define MOVIEPIPE "moviepipe.mjpg"
+#define CAM_REINIT_BEFORE_SNAPSHOT 1
+#define CAM_REINIT_AFTER_SNAPSHOT 1
 
 enum
 {
@@ -100,11 +102,13 @@ static void photo_booth_video_widget_ready (PhotoBooth *pb);
 static gboolean photo_booth_preview (PhotoBooth *pb);
 static void photo_booth_snapshot_start (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb);
+static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
 
 /* libgphoto2 */
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
 static gboolean photo_booth_cam_close (CameraInfo **cam_info);
+static gboolean photo_booth_focus (CameraInfo *cam_info);
 static gboolean photo_booth_take_photo (CameraInfo *cam_info);
 static void photo_booth_flush_pipe (int fd);
 static void photo_booth_capture_thread_func (PhotoBooth *pb);
@@ -488,9 +492,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					continue;
 				}
 				else {
-					g_mutex_lock (&pb->cam_info->mutex);
 					gp_file_get_mime_type (gp_file, &mime);
-					g_mutex_unlock (&pb->cam_info->mutex);
 					if (strcmp (mime, GP_MIME_JPEG)) {
 						GST_ERROR_OBJECT ("Movie capture error... Unhandled MIME type '%s'.", mime);
 						continue;
@@ -499,6 +501,15 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					GST_LOG_OBJECT (pb, "captured frame (%d frames total)", captured_frames);
 				}
 			}
+		}
+		else if (ret == 0 && state == CAPTURE_PRETRIGGER)
+		{
+			gtk_label_set_text (priv->win->status, _("Focussing..."));
+#if CAM_REINIT_BEFORE_SNAPSHOT
+			photo_booth_cam_close (&pb->cam_info);
+			photo_booth_cam_init (&pb->cam_info);
+#endif
+			photo_booth_focus (pb->cam_info);
 		}
 		else if (ret == 0 && state == CAPTURE_PHOTO)
 		{
@@ -509,8 +520,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				if (ret)
 				{
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
+#if CAM_REINIT_AFTER_SNAPSHOT
 					photo_booth_cam_close (&pb->cam_info);
 					photo_booth_cam_init (&pb->cam_info);
+#endif
 				}
 				else {
 					gtk_label_set_text (priv->win->status, _("Taking photo failed!"));
@@ -537,6 +550,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				case CONTROL_VIDEO:
 					GST_DEBUG_OBJECT (pb, "CONTROL_VIDEO");
 					state = CAPTURE_VIDEO;
+					break;
+				case CONTROL_PRETRIGGER:
+					GST_DEBUG_OBJECT (pb, "CONTROL_PRETRIGGER");
+					state = CAPTURE_PRETRIGGER;
 					break;
 				case CONTROL_PHOTO:
 					GST_DEBUG_OBJECT (pb, "CONTROL_PHOTO");
@@ -620,7 +637,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 static GstElement *build_photo_bin (PhotoBooth *pb)
 {
 	GstElement *photo_bin;
-	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_tee;
+	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -641,6 +658,8 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	g_object_set (photo_overlay, "overlay-height", PRINT_HEIGHT, NULL);
 
 	photo_convert = gst_element_factory_make ("videoconvert", "photo-convert");
+	photo_gamma = gst_element_factory_make ("gamma", "photo-gamma");
+	g_object_set (photo_gamma, "gamma", 1.0, NULL);
 	photo_tee = gst_element_factory_make ("tee", "photo-tee");
 
 	if (!(photo_bin && photo_source && photo_decoder && photo_freeze && photo_scale && photo_filter, photo_overlay && photo_convert && photo_tee))
@@ -649,9 +668,9 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_tee, NULL);
+	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL);
 
-	if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_tee, NULL))
+	if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL))
 	{
 		GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
 		return FALSE;
@@ -948,15 +967,21 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	gchar* uri;
-	guint delay = 1;
+	guint pretrigger_delay = 1;
+	guint snapshot_delay   = 2;
 
 	priv = photo_booth_get_instance_private (pb);
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	if (priv->countdown > 1)
-		delay = (priv->countdown*1000)-100;
-	GST_DEBUG_OBJECT (pb, "started countdown of %d seconds, start taking photo in %d ms", priv->countdown, delay);
-	g_timeout_add (delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
+	{
+		pretrigger_delay = (priv->countdown*1000)-1500;
+		snapshot_delay = (priv->countdown*1000)-100;
+	}
+	GST_DEBUG_OBJECT (pb, "started countdown of %d seconds, pretrigger in %d ms, snapshot in %d ms", priv->countdown, pretrigger_delay, snapshot_delay);
+	g_timeout_add (pretrigger_delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
+	g_timeout_add (snapshot_delay,   (GSourceFunc) photo_booth_snapshot_trigger, pb);
+
 	uri = g_filename_to_uri (DEFAULT_AUDIOFILE_COUNTDOWN, NULL, NULL);
 	GST_DEBUG_OBJECT (pb, "audio uri: %s", uri);
 	g_object_set (priv->audio_playbin, "uri", uri, NULL);
@@ -970,15 +995,29 @@ static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
 	GstPad *pad;
 	gboolean ret;
 
-	GST_DEBUG_OBJECT (pb, "SNAPSHOT!");
+	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_prepare!");
 	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_pre_snapshot.dot");
 
-	if (!pb->cam_info)
-		return FALSE;
 	photo_booth_change_state (pb, PB_STATE_TAKING_PHOTO);
 
 	priv = photo_booth_get_instance_private (pb);
 	photo_booth_window_set_spinner (priv->win, TRUE);
+
+	SEND_COMMAND (pb, CONTROL_PRETRIGGER);
+
+	return FALSE;
+}
+
+static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	GstPad *pad;
+	gboolean ret;
+
+	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_trigger");
+	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_snapshot_trigger.dot");
+
+	priv = photo_booth_get_instance_private (pb);
 
 	gst_element_set_state ((priv->audio_pipeline), GST_STATE_READY);
 
@@ -1010,32 +1049,32 @@ extern int camera_auto_focus (Camera *list, GPContext *context, int onoff);
 static gboolean photo_booth_focus (CameraInfo *cam_info)
 {
 	int gpret;
-// 	CameraEventType evttype;
-// 	void *evtdata;
+	CameraEventType evttype;
+	void *evtdata;
 
 
-// 	do {
-// 		g_mutex_lock (&cam_info->mutex);
-// 		gpret = gp_camera_wait_for_event (cam_info->camera, 10, &evttype, &evtdata, cam_info->context);
-// 		g_mutex_unlock (&cam_info->mutex);
-// 		GST_DEBUG ("gp_camera_wait_for_event gpret=%i", gpret);
-// 	} while ((gpret == GP_OK) && (evttype != GP_EVENT_TIMEOUT));
-// 
-// 	g_mutex_lock (&cam_info->mutex);
-// 	gpret = camera_auto_focus (cam_info->camera, cam_info->context, 1);
-// 	g_mutex_unlock (&cam_info->mutex);
-// 	if (gpret != GP_OK) {
-// 		GST_WARNING ("gphoto error: %s\n", gp_result_as_string(gpret));
-// 		return FALSE;
-// 	}
-// 
-// 	do {
-// 		GST_DEBUG ("gp_camera_wait_for_event gpret=%i", gpret);
-// 		g_mutex_lock (&cam_info->mutex);
-// 		gpret = gp_camera_wait_for_event (cam_info->camera, 10, &evttype, &evtdata, cam_info->context);
-// 		g_mutex_unlock (&cam_info->mutex);
-// 	} while ((gpret == GP_OK) && (evttype != GP_EVENT_TIMEOUT));
-// 
+	do {
+		g_mutex_lock (&cam_info->mutex);
+		gpret = gp_camera_wait_for_event (cam_info->camera, 10, &evttype, &evtdata, cam_info->context);
+		g_mutex_unlock (&cam_info->mutex);
+		GST_DEBUG ("gp_camera_wait_for_event gpret=%i", gpret);
+	} while ((gpret == GP_OK) && (evttype != GP_EVENT_TIMEOUT));
+
+	g_mutex_lock (&cam_info->mutex);
+	gpret = camera_auto_focus (cam_info->camera, cam_info->context, 1);
+	g_mutex_unlock (&cam_info->mutex);
+	if (gpret != GP_OK) {
+		GST_WARNING ("gphoto error: %s\n", gp_result_as_string(gpret));
+		return FALSE;
+	}
+
+	do {
+		GST_DEBUG ("gp_camera_wait_for_event gpret=%i", gpret);
+		g_mutex_lock (&cam_info->mutex);
+		gpret = gp_camera_wait_for_event (cam_info->camera, 10, &evttype, &evtdata, cam_info->context);
+		g_mutex_unlock (&cam_info->mutex);
+	} while ((gpret == GP_OK) && (evttype != GP_EVENT_TIMEOUT));
+
 	g_mutex_lock (&cam_info->mutex);
 	gpret = camera_auto_focus (cam_info->camera, cam_info->context, 0);
 	g_mutex_unlock (&cam_info->mutex);
@@ -1375,7 +1414,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 
 	float scale = (float) PT_PER_IN / (float) PRINT_DPI;
 	cairo_scale(cr, scale, scale);
-        cairo_set_source_surface(cr, cairosurface, -0.0, -0.0); // FIXME offsets?
+        cairo_set_source_surface(cr, cairosurface, 16.0, 16.0); // FIXME offsets?
 	cairo_paint(cr);
 	cairo_set_matrix(cr, &m);
 	

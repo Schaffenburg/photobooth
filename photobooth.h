@@ -23,10 +23,11 @@
 #include <gphoto2/gphoto2.h>
 #include <gphoto2/gphoto2-camera.h>
 
-#define CONTROL_VIDEO          'V'     /* start movie capture */
-#define CONTROL_PHOTO          'T'     /* photo capture */
-#define CONTROL_PAUSE          'P'     /* pause capture */
-#define CONTROL_STOP           'S'     /* stop capture thread */
+#define CONTROL_VIDEO          '1'     /* start movie capture */
+#define CONTROL_PRETRIGGER     '2'     /* pretrigger */
+#define CONTROL_PHOTO          '3'     /* photo capture */
+#define CONTROL_PAUSE          '4'     /* pause capture */
+#define CONTROL_STOP           '0'     /* stop capture thread */
 #define CONTROL_SOCKETS(src)   src->control_sock
 #define WRITE_SOCKET(src)      src->control_sock[1]
 #define READ_SOCKET(src)       src->control_sock[0]
@@ -66,6 +67,7 @@ typedef enum
 {
 	CAPTURE_INIT = 0,
 	CAPTURE_VIDEO,
+	CAPTURE_PRETRIGGER,
 	CAPTURE_PHOTO,
 	CAPTURE_PAUSED,
 	CAPTURE_STOP,
