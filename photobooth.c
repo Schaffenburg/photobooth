@@ -235,7 +235,7 @@ static void photo_booth_activate (GApplication *app)
 	photo_booth_setup_window (PHOTO_BOOTH (app));
 }
 
-static void photo_booth_open (GApplication  *app, GFile **files, gint n_files, const gchar *hint)
+static void photo_booth_open (GApplication *app, GFile **files, gint n_files, const gchar *hint)
 {
 	GST_DEBUG_OBJECT (app, "photo_booth_open");
 	photo_booth_setup_window (PHOTO_BOOTH (app));
@@ -276,7 +276,7 @@ static void photo_booth_load_strings ()
 	GError *error = NULL;
 	guint group, keyidx;
 	gsize num_groups, num_keys;
-        gchar **groups, **keys, *val;
+	gchar **groups, **keys, *val;
 	gchar *key;
 	gchar *value;
 
@@ -505,11 +505,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		else if (ret == 0 && state == CAPTURE_PRETRIGGER)
 		{
 			gtk_label_set_text (priv->win->status, _("Focussing..."));
+			photo_booth_focus (pb->cam_info);
 #if CAM_REINIT_BEFORE_SNAPSHOT
 			photo_booth_cam_close (&pb->cam_info);
 			photo_booth_cam_init (&pb->cam_info);
 #endif
-			photo_booth_focus (pb->cam_info);
 		}
 		else if (ret == 0 && state == CAPTURE_PHOTO)
 		{
@@ -886,7 +886,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 			break;
 		case PB_STATE_WAITING_FOR_ANSWER:
 		{
-			gtk_widget_hide  (GTK_WIDGET (priv->win->button_yes));
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_yes));
 			photo_booth_preview (pb);
 			break;
 		}
@@ -1190,10 +1190,13 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 	return ret;
 }
 
+#define ICC_SRC_TEMPLATE "CNXD-sRGB.icc"
+#define ICC_DST_TEMPLATE "CP955_F.icc"
+
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GstElement *tee, *encoder, *filesink, *appsink;
+	GstElement *tee, *encoder, *filesink, *icc, *appsink;
 	priv = photo_booth_get_instance_private (pb);
 
 	GST_DEBUG_OBJECT (pb, "plugging photo processing elements. locking...");
@@ -1212,15 +1215,19 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	if (!gst_element_link_many (tee, encoder, filesink, NULL))
 		GST_ERROR_OBJECT (pb->photo_bin, "couldn't link photobin filewrite elements!");
 
+	icc = gst_element_factory_make ("icc", "print-icc");
 	appsink = gst_element_factory_make ("appsink", "print-appsink");
-	if (!appsink)
-		GST_ERROR_OBJECT (pb->photo_bin, "Failed to make appsink");
+	if (!icc || !appsink )
+		GST_ERROR_OBJECT (pb->photo_bin, "Failed to make photo print processing element(s): %s%s", icc?"":" icc", appsink?"":" appsink");
 
-	gst_bin_add (GST_BIN (pb->photo_bin), appsink);
+	gst_bin_add_many (GST_BIN (pb->photo_bin), icc, appsink, NULL);
+	g_object_set (G_OBJECT (icc), "intent", 0, NULL);
+	g_object_set (G_OBJECT (icc), "src-profile", ICC_SRC_TEMPLATE, NULL);
+	g_object_set (G_OBJECT (icc), "dst-profile", ICC_DST_TEMPLATE, NULL);
 	g_object_set (G_OBJECT (appsink), "emit-signals", TRUE, NULL);
 	g_object_set (G_OBJECT (appsink), "enable-last-sample", FALSE, NULL);
 	g_signal_connect (appsink, "new-sample", G_CALLBACK (photo_booth_catch_print_buffer), pb);
-	if (!gst_element_link (tee, appsink))
+	if (!gst_element_link_many (tee, icc, appsink, NULL))
 		GST_ERROR_OBJECT (pb->photo_bin, "couldn't link appsink!");
 
 	gst_object_unref (tee);
@@ -1258,7 +1265,7 @@ static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpoin
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GstElement *tee, *encoder, *filesink, *appsink;
+	GstElement *tee, *encoder, *filesink, *appsink, *icc;
 	priv = photo_booth_get_instance_private (pb);
 
 	GST_DEBUG_OBJECT (pb, "remove output file encoder and writer elements and pause. locking...");
@@ -1268,15 +1275,18 @@ static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 	tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
 	encoder = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-encoder");
 	filesink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-filesink");
+	icc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-icc");
 	appsink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-appsink");
 	gst_element_unlink_many (tee, encoder, filesink, NULL);
-	gst_element_unlink_many (tee, appsink, NULL);
-	gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, appsink, NULL);
+	gst_element_unlink_many (tee, icc, appsink, NULL);
+	gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, icc, appsink, NULL);
 	gst_element_set_state (filesink, GST_STATE_NULL);
 	gst_element_set_state (encoder, GST_STATE_NULL);
+	gst_element_set_state (icc, GST_STATE_NULL);
 	gst_element_set_state (appsink, GST_STATE_NULL);
 	gst_object_unref (tee);
 	gst_object_unref (encoder);
+	gst_object_unref (icc);
 	gst_object_unref (filesink);
 	priv->photo_block_id = 0;
 
@@ -1310,6 +1320,8 @@ void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win)
 	}
 }
 
+#define ALWAYS_PRINT_DIALOG 1
+
 static void photo_booth_print (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
@@ -1317,9 +1329,13 @@ static void photo_booth_print (PhotoBooth *pb)
 	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_photo_print.dot");
 	photo_booth_get_printer_status (pb);
 	GST_INFO_OBJECT (pb, "PRINT! prints_remaining=%i", priv->prints_remaining);
-	gtk_widget_hide  (GTK_WIDGET (priv->win->button_yes));
+	gtk_widget_hide (GTK_WIDGET (priv->win->button_yes));
 
+#ifdef ALWAYS_PRINT_DIALOG
+	if (1)
+#else
 	if (priv->prints_remaining > 1)
+#endif
 	{
 		gtk_label_set_text (priv->win->status, _("Printing..."));
 		photo_booth_change_state (pb, PB_STATE_PRINTING);
@@ -1414,7 +1430,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 
 	float scale = (float) PT_PER_IN / (float) PRINT_DPI;
 	cairo_scale(cr, scale, scale);
-        cairo_set_source_surface(cr, cairosurface, 16.0, 16.0); // FIXME offsets?
+	cairo_set_source_surface(cr, cairosurface, 16.0, 16.0); // FIXME offsets?
 	cairo_paint(cr);
 	cairo_set_matrix(cr, &m);
 	
