@@ -447,11 +447,13 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		rfd[0].fd = READ_SOCKET (pb);
 		rfd[0].events = POLLIN | POLLERR | POLLHUP | POLLPRI;
 
-		if (state == CAPTURE_INIT && !pb->cam_info)
+		if (state == CAPTURE_INIT || state == CAPTURE_FAILED && !pb->cam_info)
 		{
 			if (photo_booth_cam_init (&pb->cam_info))
 			{
 				GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
+				if (state == CAPTURE_FAILED)
+					photo_booth_window_set_spinner (priv->win, FALSE);
 				state = CAPTURE_VIDEO;
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
 			}
@@ -485,7 +487,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					GST_ERROR_OBJECT (pb, "Movie capture error %d", gpret);
 					if (gpret == -7)
 					{
-						state = CAPTURE_INIT;
+						state = CAPTURE_FAILED;
 						photo_booth_change_state (pb, PB_STATE_NONE);
 						photo_booth_cam_close (&pb->cam_info);
 					}
@@ -505,7 +507,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		else if (ret == 0 && state == CAPTURE_PRETRIGGER)
 		{
 			gtk_label_set_text (priv->win->status, _("Focussing..."));
-			photo_booth_focus (pb->cam_info);
+// 			photo_booth_focus (pb->cam_info);
 #if CAM_REINIT_BEFORE_SNAPSHOT
 			photo_booth_cam_close (&pb->cam_info);
 			photo_booth_cam_init (&pb->cam_info);
@@ -530,7 +532,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					GST_ERROR_OBJECT (pb, "Taking photo failed!");
 					photo_booth_cam_close (&pb->cam_info);
 					photo_booth_change_state (pb, PB_STATE_NONE);
-					state = CAPTURE_INIT;
+					state = CAPTURE_FAILED;
 				}
 			}
 		}
@@ -566,7 +568,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		}
 		else if (state == CAPTURE_PAUSED)
 		{
-			GST_DEBUG_OBJECT (pb, "captured thread paused... timeout. %s", photo_booth_state_get_name (priv->state));
+			GST_LOG_OBJECT (pb, "captured thread paused... timeout. %s", photo_booth_state_get_name (priv->state));
 		}
 	}
 

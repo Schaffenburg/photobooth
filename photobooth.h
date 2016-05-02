@@ -71,6 +71,7 @@ typedef enum
 	CAPTURE_PHOTO,
 	CAPTURE_PAUSED,
 	CAPTURE_STOP,
+	CAPTURE_FAILED,
 } PhotoboothCaptureThreadState;
 
 typedef enum
