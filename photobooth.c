@@ -1115,6 +1115,10 @@ static gboolean photo_booth_take_photo (CameraInfo *cam_info)
 	gpret = gp_camera_file_delete (cam_info->camera, camera_file_path.folder, camera_file_path.name, cam_info->context);
 	GST_DEBUG ("gp_camera_file_delete gpret=%i", gpret);
 // 	gp_file_free(file);
+
+	if (cam_info->size <= 0)
+		goto fail;
+
 	g_mutex_unlock (&cam_info->mutex);
 	return TRUE;
 
@@ -1192,13 +1196,13 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 	return ret;
 }
 
-#define ICC_SRC_TEMPLATE "CNXD-sRGB.icc"
-#define ICC_DST_TEMPLATE "CP955_F.icc"
+#define ICC_INPUT_TEMPLATE "CNXD-sRGB.icc"
+#define ICC_DEST_TEMPLATE "CP955_F.icc"
 
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GstElement *tee, *encoder, *filesink, *icc, *appsink;
+	GstElement *tee, *encoder, *filesink, *lcms, *appsink;
 	priv = photo_booth_get_instance_private (pb);
 
 	GST_DEBUG_OBJECT (pb, "plugging photo processing elements. locking...");
@@ -1217,20 +1221,41 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	if (!gst_element_link_many (tee, encoder, filesink, NULL))
 		GST_ERROR_OBJECT (pb->photo_bin, "couldn't link photobin filewrite elements!");
 
-	icc = gst_element_factory_make ("icc", "print-icc");
-	appsink = gst_element_factory_make ("appsink", "print-appsink");
-	if (!icc || !appsink )
-		GST_ERROR_OBJECT (pb->photo_bin, "Failed to make photo print processing element(s): %s%s", icc?"":" icc", appsink?"":" appsink");
+	lcms = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-lcms");
+	if (!lcms)
+	{
+		lcms = gst_element_factory_make ("lcms", "print-lcms");
+		if (lcms)
+		{
+			g_object_set (G_OBJECT (lcms), "intent", 0, NULL);
+			g_object_set (G_OBJECT (lcms), "lookup", 2, NULL);
+			g_object_set (G_OBJECT (lcms), "input-profile", ICC_INPUT_TEMPLATE, NULL);
+			g_object_set (G_OBJECT (lcms), "dest-profile", ICC_DEST_TEMPLATE, NULL);
+			g_object_set (G_OBJECT (lcms), "preserve-black", TRUE, NULL);
+			gst_bin_add (GST_BIN (pb->photo_bin), lcms);
+		}
+		else
+			GST_WARNING_OBJECT (pb->photo_bin, "no lcms pluing found, ICC color correction unavailable!");
+	}
 
-	gst_bin_add_many (GST_BIN (pb->photo_bin), icc, appsink, NULL);
-	g_object_set (G_OBJECT (icc), "intent", 0, NULL);
-	g_object_set (G_OBJECT (icc), "src-profile", ICC_SRC_TEMPLATE, NULL);
-	g_object_set (G_OBJECT (icc), "dst-profile", ICC_DST_TEMPLATE, NULL);
+	appsink = gst_element_factory_make ("appsink", "print-appsink");
+	if (!appsink )
+		GST_ERROR_OBJECT (pb->photo_bin, "Failed to make photo print processing element(s): %s", appsink?"":" appsink");
+
+	gst_bin_add (GST_BIN (pb->photo_bin), appsink);
+	if (lcms)
+	{
+		if (!gst_element_link_many (tee, lcms, appsink, NULL))
+			GST_ERROR_OBJECT (pb->photo_bin, "couldn't link tee ! lcms ! appsink!");
+	}
+	else
+	{
+		if (!gst_element_link (tee, appsink))
+			GST_ERROR_OBJECT (pb->photo_bin, "couldn't link tee ! appsink!");
+	}
 	g_object_set (G_OBJECT (appsink), "emit-signals", TRUE, NULL);
 	g_object_set (G_OBJECT (appsink), "enable-last-sample", FALSE, NULL);
 	g_signal_connect (appsink, "new-sample", G_CALLBACK (photo_booth_catch_print_buffer), pb);
-	if (!gst_element_link_many (tee, icc, appsink, NULL))
-		GST_ERROR_OBJECT (pb->photo_bin, "couldn't link appsink!");
 
 	gst_object_unref (tee);
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
@@ -1267,7 +1292,7 @@ static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpoin
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GstElement *tee, *encoder, *filesink, *appsink, *icc;
+	GstElement *tee, *encoder, *filesink, *appsink, *lcms;
 	priv = photo_booth_get_instance_private (pb);
 
 	GST_DEBUG_OBJECT (pb, "remove output file encoder and writer elements and pause. locking...");
@@ -1277,18 +1302,24 @@ static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 	tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
 	encoder = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-encoder");
 	filesink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-filesink");
-	icc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-icc");
-	appsink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-appsink");
 	gst_element_unlink_many (tee, encoder, filesink, NULL);
-	gst_element_unlink_many (tee, icc, appsink, NULL);
-	gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, icc, appsink, NULL);
+
+	appsink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-appsink");
+	lcms = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-lcms");
+	if (lcms)
+	{
+		gst_element_unlink_many (tee, lcms, appsink, NULL);
+		gst_element_set_state (lcms, GST_STATE_READY);
+	}
+	else
+		gst_element_unlink (tee, appsink);
+
+	gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, appsink, NULL);
 	gst_element_set_state (filesink, GST_STATE_NULL);
 	gst_element_set_state (encoder, GST_STATE_NULL);
-	gst_element_set_state (icc, GST_STATE_NULL);
 	gst_element_set_state (appsink, GST_STATE_NULL);
 	gst_object_unref (tee);
 	gst_object_unref (encoder);
-	gst_object_unref (icc);
 	gst_object_unref (filesink);
 	priv->photo_block_id = 0;
 
