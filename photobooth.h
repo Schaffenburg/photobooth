@@ -51,9 +51,6 @@ G_STMT_START {                                 \
 
 G_BEGIN_DECLS
 
-#define PREVIEW_FPS 24
-#define PT_PER_IN 72
-
 struct _CameraInfo {
 	Camera *camera;
 	GPContext *context;
@@ -85,7 +82,6 @@ typedef enum
 	PB_STATE_PRINTING
 } PhotoboothState;
 
-#define STRINGS_FILE "strings.ini"
 GHashTable *G_strings_table;
 #define _(key) (g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
 
@@ -123,6 +119,8 @@ struct _PhotoBoothClass
 };
 
 GType   photo_booth_get_type    (void);
+PhotoBooth *photo_booth_new (void);
+void    photo_booth_load_settings (PhotoBooth *pb, const gchar *filename);
 
 G_END_DECLS
 

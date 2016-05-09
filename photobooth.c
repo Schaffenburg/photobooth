@@ -29,6 +29,9 @@
 #include "photobooth.h"
 #include "photoboothwin.h"
 
+#define G_SETTINGS_ENABLE_BACKEND
+#include <gio/gsettingsbackend.h>
+
 #define photo_booth_parent_class parent_class
 
 typedef struct _PhotoBoothPrivate PhotoBoothPrivate;
@@ -44,36 +47,35 @@ struct _PhotoBoothPrivate
 	gulong             photo_block_id;
 
 	guint32            countdown;
+	gchar             *overlay_image;
 
 	gchar             *printer_backend;
+	gint               print_dpi, print_width, print_height;
+	gchar             *print_icc_profile;
 	gint               prints_remaining;
 	GstBuffer         *print_buffer;
 	GtkPrintSettings  *printer_settings;
 	GMutex             processing_mutex;
+	
+	gint               preview_fps, preview_width, preview_height;
+	gboolean           cam_reeinit_before_snapshot, cam_reeinit_after_snapshot;
+	gchar             *cam_icc_profile;
 
 	GstElement	  *audio_pipeline;
 	GstElement	  *audio_playbin;
+	gchar             *countdown_audio_uri;
 };
 
-#define DEFAULT_AUDIOFILE_COUNTDOWN "/net/home/fraxinas/microcontroller/photobooth/beep.m4a"
+#define MOVIEPIPE "moviepipe.mjpg"
+#define DEFAULT_CONFIG "default.ini"
+#define PREVIEW_FPS 24
 #define DEFAULT_COUNTDOWN 5
-#define DEFAULT_PRINTER_BACKEND "mitsu9550"
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
 #define PREVIEW_WIDTH 640
 #define PREVIEW_HEIGHT 424
-#define MOVIEPIPE "moviepipe.mjpg"
-#define CAM_REINIT_BEFORE_SNAPSHOT 1
-#define CAM_REINIT_AFTER_SNAPSHOT 1
-
-enum
-{
-	ARG_0,
-	ARG_COUNTDOWN,
-	ARG_PRINTER_BACKEND,
-	ARG_PRINTS_REMAINING,
-};
+#define PT_PER_IN 72
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION);
 
@@ -83,8 +85,6 @@ GST_DEBUG_CATEGORY_STATIC (photo_booth_debug);
 /* GObject / GApplication */
 static void photo_booth_activate (GApplication *app);
 static void photo_booth_open (GApplication  *app, GFile **files, gint n_files, const gchar *hint);
-static void photo_booth_set_property (GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
-static void photo_booth_get_property (GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
@@ -92,7 +92,6 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win);
 
 /* general private functions */
-static void photo_booth_load_strings ();
 const gchar* photo_booth_state_get_name (PhotoboothState state);
 static void photo_booth_change_state (PhotoBooth *pb, PhotoboothState state);
 static void photo_booth_quit_signal (PhotoBooth *pb);
@@ -145,23 +144,8 @@ static void photo_booth_class_init (PhotoBoothClass *klass)
 
 	gobject_class->finalize      = photo_booth_finalize;
 	gobject_class->dispose       = photo_booth_dispose;
-	gobject_class->set_property  = photo_booth_set_property;
-	gobject_class->get_property  = photo_booth_get_property;
 	gapplication_class->activate = photo_booth_activate;
 	gapplication_class->open     = photo_booth_open;
-
-	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_COUNTDOWN,
-	  g_param_spec_uint ("countdown", "Shutter delay (s)",
-	    "Specify shutter actuation delay countdown in seconds", 0, 60, DEFAULT_COUNTDOWN,
-	    G_PARAM_CONSTRUCT | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_PRINTER_BACKEND,
-	  g_param_spec_string ("printer-backend", "Gutenprint backend",
-	    "Specify which Gutenprint backend to use", DEFAULT_PRINTER_BACKEND,
-	    G_PARAM_CONSTRUCT | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-	g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_PRINTS_REMAINING,
-	  g_param_spec_int ("prints-remaining", "Print media remaining",
-	    "Show remaining prints on media roll (-1 = Unknown)", -1, 1000, -1,
-	    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 }
 
 static void photo_booth_init (PhotoBooth *pb)
@@ -203,10 +187,23 @@ static void photo_booth_init (PhotoBooth *pb)
 	}
 
 	priv->capture_thread = NULL;
+	
+	priv->countdown = DEFAULT_COUNTDOWN;
+	priv->preview_fps = PREVIEW_FPS;
+	priv->preview_width = PREVIEW_WIDTH;
+	priv->preview_height = PREVIEW_HEIGHT;
+	priv->print_dpi = PRINT_DPI;
+	priv->print_width = PRINT_WIDTH;
+	priv->print_height = PRINT_HEIGHT;
 	priv->print_buffer = NULL;
+	priv->print_icc_profile = NULL;
+	priv->cam_icc_profile = NULL;
+	priv->printer_backend = NULL;
 	priv->printer_settings = NULL;
+	priv->overlay_image = NULL;
+
+	G_strings_table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 	g_mutex_init (&priv->processing_mutex);
-	photo_booth_load_strings();
 }
 
 static void photo_booth_change_state (PhotoBooth *pb, PhotoboothState newstate)
@@ -266,43 +263,91 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->printer_backend);
 	if (priv->printer_settings != NULL)
 		g_object_unref (priv->printer_settings);
+	g_free (priv->countdown_audio_uri);
+	g_free (priv->print_icc_profile);
+	g_free (priv->cam_icc_profile);
+	g_free (priv->overlay_image);
+	g_hash_table_destroy (G_strings_table);
 	g_mutex_clear (&priv->processing_mutex);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
 }
 
-static void photo_booth_load_strings ()
+void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 {
 	GKeyFile* gkf;
 	GError *error = NULL;
-	guint group, keyidx;
-	gsize num_groups, num_keys;
-	gchar **groups, **keys, *val;
+	guint keyidx;
+	gsize num_keys;
+	gchar **keys, *val;
 	gchar *key;
 	gchar *value;
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	
+	GST_DEBUG_OBJECT (pb, "loading settings from file %s", filename);
 
-	G_strings_table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 	gkf = g_key_file_new();
 
-	if (g_key_file_load_from_file(gkf, STRINGS_FILE, G_KEY_FILE_NONE, &error))
+	if (g_key_file_load_from_file (gkf, filename, G_KEY_FILE_NONE, &error))
 	{
-		groups = g_key_file_get_groups(gkf, &num_groups);
-		for (group = 0; group < num_groups; group++)
+		if (g_key_file_has_group (gkf, "strings"))
 		{
-			GST_INFO("group %u/%u: \t%s", group, num_groups - 1, groups[group]);
-			keys = g_key_file_get_keys (gkf, groups[group], &num_keys, &error);
+			keys = g_key_file_get_keys (gkf, "strings", &num_keys, &error);
 			for (keyidx = 0; keyidx < num_keys; keyidx++)
 			{
-				val = g_key_file_get_value(gkf, groups[group], keys[keyidx], &error);
+				val = g_key_file_get_value(gkf, "strings", keys[keyidx], &error);
 				key = g_strdup(keys[keyidx]);
 				value = g_strdup(val);
 				g_hash_table_insert (G_strings_table, key, value);
 				GST_LOG ("key %u/%u:\t'%s' => '%s'", keyidx, num_keys-1, key, value);
 			}
+			if (error)
+			{
+				GST_INFO ( "can't read string: %s", error->message);
+				g_error_free (error);
+			}
+		}
+		if (g_key_file_has_group (gkf, "general"))
+		{
+			priv->countdown = g_key_file_get_integer (gkf, "general", "countdown", NULL);
+			gchar *audiofile = g_key_file_get_string (gkf, "general", "countdown_audio_file", NULL);
+			if (audiofile)
+			{
+				gchar *audioabsfilename;
+				if (audiofile[0] != '/')
+				{
+					gchar *cur = g_get_current_dir ();
+					audioabsfilename = g_strdup_printf ("%s/%s", cur, audiofile);
+				}
+				else
+					audioabsfilename = g_strdup (audiofile);
+				priv->countdown_audio_uri = g_filename_to_uri (audioabsfilename, NULL, NULL);
+				g_free (audiofile);
+				g_free (audioabsfilename);
+			}
+			priv->overlay_image = g_key_file_get_string (gkf, "general", "overlay_image", NULL);
+			GST_INFO ( "overlay_image: %s", priv->overlay_image);
+		}
+		if (g_key_file_has_group (gkf, "printer"))
+		{
+			priv->printer_backend = g_key_file_get_string (gkf, "printer", "backend", NULL);
+			priv->print_dpi = g_key_file_get_integer (gkf, "printer", "dpi", NULL);
+			priv->print_width = g_key_file_get_integer (gkf, "printer", "width", NULL);
+			priv->print_height = g_key_file_get_integer (gkf, "printer", "height", NULL);
+			priv->print_icc_profile = g_key_file_get_string (gkf, "printer", "icc_profile", NULL);
+		}
+		if (g_key_file_has_group (gkf, "camera"))
+		{
+			priv->preview_fps = g_key_file_get_integer (gkf, "camera", "fps", NULL);
+			priv->preview_width = g_key_file_get_integer (gkf, "camera", "preview_width", NULL);
+			priv->preview_height = g_key_file_get_integer (gkf, "camera", "preview_height", NULL);
+			priv->cam_reeinit_before_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_before_snapshot", NULL);
+			priv->cam_reeinit_after_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_after_snapshot", NULL);
+			priv->cam_icc_profile = g_key_file_get_string (gkf, "camera", "icc_profile", NULL);
 		}
 	}
 	if (error)
 	{
-		GST_INFO ( "can't read strings lookup file %s: %s", STRINGS_FILE, error->message);
+		GST_INFO ( "can't open settings file %s: %s", filename, error->message);
 		g_error_free (error);
 	}
 }
@@ -382,45 +427,6 @@ static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBoo
 {
 	GST_INFO_OBJECT (pb, "main window closed! exit...");
 	g_application_quit (G_APPLICATION (pb));
-}
-
-static void photo_booth_set_property (GObject * object, guint prop_id, const GValue * value, GParamSpec * pspec)
-{
-	PhotoBooth *pb = PHOTO_BOOTH (object);
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-
-	switch (prop_id) {
-		case ARG_COUNTDOWN:
-			priv->countdown = g_value_get_uint (value);
-			break;
-		case ARG_PRINTER_BACKEND:
-			priv->printer_backend = g_strdup (g_value_get_string (value));
-			break;
-		default:
-			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-			break;
-	}
-}
-
-static void photo_booth_get_property (GObject * object, guint prop_id, GValue * value, GParamSpec * pspec)
-{
-	PhotoBooth *pb = PHOTO_BOOTH (object);
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-
-	switch (prop_id) {
-		case ARG_COUNTDOWN:
-			g_value_set_uint (value, priv->countdown);
-			break;
-		case ARG_PRINTER_BACKEND:
-			g_value_set_string (value, priv->printer_backend);
-			break;
-		case ARG_PRINTS_REMAINING:
-			g_value_set_int (value, priv->prints_remaining);
-			break;
-		default:
-			G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-			break;
-	}
 }
 
 static void photo_booth_capture_thread_func (PhotoBooth *pb)
@@ -508,10 +514,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		{
 			gtk_label_set_text (priv->win->status, _("Focussing..."));
 // 			photo_booth_focus (pb->cam_info);
-#if CAM_REINIT_BEFORE_SNAPSHOT
-			photo_booth_cam_close (&pb->cam_info);
-			photo_booth_cam_init (&pb->cam_info);
-#endif
+			if (priv->cam_reeinit_before_snapshot)
+			{
+				photo_booth_cam_close (&pb->cam_info);
+				photo_booth_cam_init (&pb->cam_info);
+			}
 		}
 		else if (ret == 0 && state == CAPTURE_PHOTO)
 		{
@@ -522,10 +529,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				if (ret)
 				{
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
-#if CAM_REINIT_AFTER_SNAPSHOT
-					photo_booth_cam_close (&pb->cam_info);
-					photo_booth_cam_init (&pb->cam_info);
-#endif
+					if (priv->cam_reeinit_after_snapshot)
+					{
+						photo_booth_cam_close (&pb->cam_info);
+						photo_booth_cam_init (&pb->cam_info);
+					}
 				}
 				else {
 					gtk_label_set_text (priv->win->status, _("Taking photo failed!"));
@@ -586,10 +594,13 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 
 static GstElement *build_video_bin (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv;
 	GstElement *video_bin;
 	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_convert, *video_overlay;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
+
+	priv = photo_booth_get_instance_private (pb);
 
 	video_bin = gst_element_factory_make ("bin", "video-bin");
 	mjpeg_source = gst_element_factory_make ("fdsrc", "mjpeg-fdsrc");
@@ -598,7 +609,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (mjpeg_source, "blocksize", 65536, NULL);
 
 	mjpeg_filter = gst_element_factory_make ("capsfilter", "mjpeg-capsfilter");
-	caps = gst_caps_new_simple ("image/jpeg", "width", G_TYPE_INT, PREVIEW_WIDTH, "height", G_TYPE_INT, PREVIEW_HEIGHT, "framerate", GST_TYPE_FRACTION, PREVIEW_FPS, 1, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
+	caps = gst_caps_new_simple ("image/jpeg", "width", G_TYPE_INT, priv->preview_width, "height", G_TYPE_INT, priv->preview_height, "framerate", GST_TYPE_FRACTION, PREVIEW_FPS, 1, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
 	g_object_set (G_OBJECT (mjpeg_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
@@ -606,12 +617,13 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	video_scale = gst_element_factory_make ("videoscale", "mjpeg-videoscale");
 	video_convert = gst_element_factory_make ("videoconvert", "mjpeg-videoconvert");
 	video_filter = gst_element_factory_make ("capsfilter", "video-capsfilter");
-	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, PREVIEW_WIDTH, "height", G_TYPE_INT, PREVIEW_HEIGHT, NULL);
+	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, priv->preview_width, "height", G_TYPE_INT, priv->preview_height, NULL);
 	g_object_set (G_OBJECT (video_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
 	video_overlay = gst_element_factory_make ("gdkpixbufoverlay", "video-overlay");
-	g_object_set (video_overlay, "location", "overlay_print.png", NULL);
+	if (priv->overlay_image)
+		g_object_set (video_overlay, "location", priv->overlay_image, NULL);
 
 	if (!(mjpeg_source && mjpeg_filter && mjpeg_decoder && video_scale && video_convert && video_filter && video_overlay))
 	{
@@ -638,10 +650,13 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 
 static GstElement *build_photo_bin (PhotoBooth *pb)
 {
+	PhotoBoothPrivate *priv;
 	GstElement *photo_bin;
 	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
+
+	priv = photo_booth_get_instance_private (pb);
 
 	photo_bin = gst_element_factory_make ("bin", "photo-bin");
 	photo_source = gst_element_factory_make ("appsrc", "photo-appsrc");
@@ -650,14 +665,15 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	photo_scale = gst_element_factory_make ("videoscale", "photo-scale");
 
 	photo_filter = gst_element_factory_make ("capsfilter", "photo-capsfilter");
-	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, PRINT_WIDTH, "height", G_TYPE_INT, PRINT_HEIGHT, "framerate", GST_TYPE_FRACTION, 10, 1, NULL);
+	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, priv->print_width, "height", G_TYPE_INT, priv->print_height, "framerate", GST_TYPE_FRACTION, 10, 1, NULL);
 	g_object_set (G_OBJECT (photo_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
 	photo_overlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-overlay");
-	g_object_set (photo_overlay, "location", "overlay_print.png", NULL);
-	g_object_set (photo_overlay, "overlay-width", PRINT_WIDTH, NULL);
-	g_object_set (photo_overlay, "overlay-height", PRINT_HEIGHT, NULL);
+	if (priv->overlay_image)		
+		g_object_set (photo_overlay, "location", priv->overlay_image, NULL);
+	g_object_set (photo_overlay, "overlay-width", priv->print_width, NULL);
+	g_object_set (photo_overlay, "overlay-height", priv->print_height, NULL);
 
 	photo_convert = gst_element_factory_make ("videoconvert", "photo-convert");
 	photo_gamma = gst_element_factory_make ("gamma", "photo-gamma");
@@ -911,7 +927,11 @@ static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
 	gint remain = -1;
 	gint ret = 0;
 
-	if (g_spawn_sync (NULL, argv, envp, G_SPAWN_DEFAULT, NULL, NULL, NULL, &output, &ret, &error))
+	if (!priv->printer_backend)
+	{
+		label_string = g_strdup_printf(_("No printer configured!"));
+	}
+	else if (g_spawn_sync (NULL, argv, envp, G_SPAWN_DEFAULT, NULL, NULL, NULL, &output, &ret, &error))
 	{
 		GMatchInfo *match_info;
 		GRegex *regex;
@@ -968,7 +988,6 @@ static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
 static void photo_booth_snapshot_start (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	gchar* uri;
 	guint pretrigger_delay = 1;
 	guint snapshot_delay   = 2;
 
@@ -984,11 +1003,11 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	g_timeout_add (pretrigger_delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
 	g_timeout_add (snapshot_delay,   (GSourceFunc) photo_booth_snapshot_trigger, pb);
 
-	uri = g_filename_to_uri (DEFAULT_AUDIOFILE_COUNTDOWN, NULL, NULL);
-	GST_DEBUG_OBJECT (pb, "audio uri: %s", uri);
-	g_object_set (priv->audio_playbin, "uri", uri, NULL);
-	g_free (uri);
-	gst_element_set_state (priv->audio_pipeline, GST_STATE_PLAYING);
+	if (priv->countdown_audio_uri)
+	{
+		g_object_set (priv->audio_playbin, "uri", priv->countdown_audio_uri, NULL);
+		gst_element_set_state (priv->audio_pipeline, GST_STATE_PLAYING);
+	}
 }
 
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
@@ -1196,9 +1215,6 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 	return ret;
 }
 
-#define ICC_INPUT_TEMPLATE "CNXD-sRGB.icc"
-#define ICC_DEST_TEMPLATE "CP955_F.icc"
-
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
@@ -1229,8 +1245,10 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 		{
 			g_object_set (G_OBJECT (lcms), "intent", 0, NULL);
 			g_object_set (G_OBJECT (lcms), "lookup", 2, NULL);
-			g_object_set (G_OBJECT (lcms), "input-profile", ICC_INPUT_TEMPLATE, NULL);
-			g_object_set (G_OBJECT (lcms), "dest-profile", ICC_DEST_TEMPLATE, NULL);
+			if (priv->cam_icc_profile)
+				g_object_set (G_OBJECT (lcms), "input-profile", priv->cam_icc_profile, NULL);
+			if (priv->print_icc_profile)
+				g_object_set (G_OBJECT (lcms), "dest-profile", priv->print_icc_profile, NULL);
 			g_object_set (G_OBJECT (lcms), "preserve-black", TRUE, NULL);
 			gst_bin_add (GST_BIN (pb->photo_bin), lcms);
 		}
@@ -1455,13 +1473,13 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 	guint8 *h = map.data;
 	guint l = map.size;
 
-	int stride = cairo_format_stride_for_width (CAIRO_FORMAT_RGB24, PRINT_WIDTH);
-	cairo_surface_t *cairosurface = cairo_image_surface_create_for_data (map.data, CAIRO_FORMAT_RGB24, PRINT_WIDTH, PRINT_HEIGHT, stride);
+	int stride = cairo_format_stride_for_width (CAIRO_FORMAT_RGB24, priv->print_width);
+	cairo_surface_t *cairosurface = cairo_image_surface_create_for_data (map.data, CAIRO_FORMAT_RGB24, priv->print_width, priv->print_height, stride);
 	cairo_t *cr = gtk_print_context_get_cairo_context (context);
 	cairo_matrix_t m;
 	cairo_get_matrix(cr, &m);
 
-	float scale = (float) PT_PER_IN / (float) PRINT_DPI;
+	float scale = (float) PT_PER_IN / (float) priv->print_dpi;
 	cairo_scale(cr, scale, scale);
 	cairo_set_source_surface(cr, cairosurface, 16.0, 16.0); // FIXME offsets?
 	cairo_paint(cr);
@@ -1535,6 +1553,11 @@ int main (int argc, char *argv[])
 	gst_init (0, NULL);
 
 	pb = photo_booth_new ();
+	
+	if (argc == 2)
+		photo_booth_load_settings (pb, argv[1]);
+	else
+		photo_booth_load_settings (pb, DEFAULT_CONFIG);
 
 	g_unix_signal_add (SIGINT, (GSourceFunc) photo_booth_quit_signal, pb);
 	ret = g_application_run (G_APPLICATION (pb), argc, argv);
