@@ -15,6 +15,7 @@
 
 #include <gtk/gtk.h>
 #include <time.h>
+#include <glib/gstdio.h>
 #include "photobooth.h"
 #include "photoboothwin.h"
 
@@ -39,7 +40,21 @@ gboolean _pbw_clock_tick (GtkLabel *status_clock);
 static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 {
 	GST_DEBUG_CATEGORY_INIT (photo_booth_windows_debug, "photoboothwin", GST_DEBUG_BOLD | GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLUE, "PhotoBoothWindow");
-	gtk_widget_class_set_template_from_resource (GTK_WIDGET_CLASS (klass), "/org/schaffenburg/photobooth/photobooth.ui");
+	GError *error = NULL;
+	if (G_template_filename)
+	{
+		GST_DEBUG ("open template from file '%s'", G_template_filename);
+		GMappedFile *templatef = g_mapped_file_new (G_template_filename, FALSE, &error);
+		gtk_widget_class_set_template (GTK_WIDGET_CLASS (klass), g_mapped_file_get_bytes (templatef));
+		g_mapped_file_unref (templatef);
+	}
+	if (error)
+	{
+		GST_INFO ( "can't use template from file '%s':  %s. Falling back to default resource!", G_template_filename, error->message);
+		g_error_free (error);
+		gtk_widget_class_set_template_from_resource (GTK_WIDGET_CLASS (klass), "/org/schaffenburg/photobooth/photobooth.ui");
+	}
+	GST_DEBUG ("done!");
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, overlay);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
@@ -56,13 +71,17 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	priv = photo_booth_window_get_instance_private (win);
 	GdkScreen *screen = gdk_screen_get_default ();
 	gtk_window_fullscreen_on_monitor (GTK_WINDOW (win), screen, 0);
-	GFile *cssfile = g_file_new_for_path ("photobooth.css");
-	if (cssfile)
+	if (G_stylesheet_filename)
 	{
-		GtkCssProvider *cssprovider = gtk_css_provider_new ();
-		gtk_css_provider_load_from_file (cssprovider, cssfile, NULL);
-		gtk_style_context_add_provider_for_screen (screen, (GtkStyleProvider *)cssprovider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-		g_object_unref (cssfile);
+		GFile *cssfile = g_file_new_for_path (G_stylesheet_filename);
+		if (cssfile)
+		{
+			GST_DEBUG ("open stylesheet from file '%s'", G_stylesheet_filename);
+			GtkCssProvider *cssprovider = gtk_css_provider_new ();
+			gtk_css_provider_load_from_file (cssprovider, cssfile, NULL);
+			gtk_style_context_add_provider_for_screen (screen, (GtkStyleProvider *)cssprovider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+			g_object_unref (cssfile);
+		}
 	}
 	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }

@@ -51,6 +51,7 @@ struct _PhotoBoothPrivate
 
 	gchar             *printer_backend;
 	gint               print_dpi, print_width, print_height;
+	gdouble            print_x_offset, print_y_offset;
 	gchar             *print_icc_profile;
 	gint               prints_remaining;
 	GstBuffer         *print_buffer;
@@ -195,12 +196,15 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->print_dpi = PRINT_DPI;
 	priv->print_width = PRINT_WIDTH;
 	priv->print_height = PRINT_HEIGHT;
+	priv->print_x_offset = priv->print_y_offset = 0;
 	priv->print_buffer = NULL;
 	priv->print_icc_profile = NULL;
 	priv->cam_icc_profile = NULL;
 	priv->printer_backend = NULL;
 	priv->printer_settings = NULL;
 	priv->overlay_image = NULL;
+	G_stylesheet_filename = NULL;
+	G_template_filename = NULL;
 
 	G_strings_table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 	g_mutex_init (&priv->processing_mutex);
@@ -270,6 +274,8 @@ static void photo_booth_dispose (GObject *object)
 	g_hash_table_destroy (G_strings_table);
 	g_mutex_clear (&priv->processing_mutex);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
+	g_free (G_stylesheet_filename);
+	g_free (G_template_filename);
 }
 
 void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
@@ -308,6 +314,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		}
 		if (g_key_file_has_group (gkf, "general"))
 		{
+			G_template_filename = g_key_file_get_string (gkf, "general", "template", NULL);
+			G_stylesheet_filename = g_key_file_get_string (gkf, "general", "stylesheet", NULL);
 			priv->countdown = g_key_file_get_integer (gkf, "general", "countdown", NULL);
 			gchar *audiofile = g_key_file_get_string (gkf, "general", "countdown_audio_file", NULL);
 			if (audiofile)
@@ -325,7 +333,6 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				g_free (audioabsfilename);
 			}
 			priv->overlay_image = g_key_file_get_string (gkf, "general", "overlay_image", NULL);
-			GST_INFO ( "overlay_image: %s", priv->overlay_image);
 		}
 		if (g_key_file_has_group (gkf, "printer"))
 		{
@@ -334,6 +341,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			priv->print_width = g_key_file_get_integer (gkf, "printer", "width", NULL);
 			priv->print_height = g_key_file_get_integer (gkf, "printer", "height", NULL);
 			priv->print_icc_profile = g_key_file_get_string (gkf, "printer", "icc_profile", NULL);
+			priv->print_x_offset = g_key_file_get_double (gkf, "printer", "offset_x", NULL);
+			priv->print_y_offset = g_key_file_get_double (gkf, "printer", "offset_y", NULL);
 		}
 		if (g_key_file_has_group (gkf, "camera"))
 		{
@@ -1467,7 +1476,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 		GST_ERROR_OBJECT (context, "can't draw because we have no photo buffer!");
 		return;
 	}
-	GST_DEBUG_OBJECT (context, "draw_page no. %i . %" GST_PTR_FORMAT "", page_nr, priv->print_buffer);
+	GST_INFO_OBJECT (context, "draw_page no. %i . %" GST_PTR_FORMAT " size %dx%x, %i dpi, offsets (%.2f, %.2f)", page_nr, priv->print_buffer, priv->print_width, priv->print_height, priv->print_dpi, priv->print_x_offset, priv->print_y_offset);
 
 	gst_buffer_map(priv->print_buffer, &map, GST_MAP_READ);
 	guint8 *h = map.data;
@@ -1481,7 +1490,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 
 	float scale = (float) PT_PER_IN / (float) priv->print_dpi;
 	cairo_scale(cr, scale, scale);
-	cairo_set_source_surface(cr, cairosurface, 16.0, 16.0); // FIXME offsets?
+	cairo_set_source_surface(cr, cairosurface, priv->print_x_offset, priv->print_y_offset);
 	cairo_paint(cr);
 	cairo_set_matrix(cr, &m);
 	

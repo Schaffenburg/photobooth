@@ -82,6 +82,8 @@ typedef enum
 	PB_STATE_PRINTING
 } PhotoboothState;
 
+gchar *G_template_filename;
+gchar *G_stylesheet_filename;
 GHashTable *G_strings_table;
 #define _(key) (g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
 
