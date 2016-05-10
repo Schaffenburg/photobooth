@@ -3,8 +3,8 @@
 }
 
 .countdown_label {
-	color: rgba (150, 200, 200, 1);
-	text-shadow: 10px 10px #000000
+	color: rgba (85, 255, 255, 1);
+	text-shadow: 8px 8px 3px #0c0d24;
 	font-weight: bold;
 	font-size: 80px;
 	padding: 0 0 0 0;
@@ -14,7 +14,7 @@
 	color: rgba (0, 0, 110, 1);
 	background: rgba (168, 233, 255, 0.9);
 	font-weight: bold;
-	font-size: 80px;
+	font-size: 60px;
 	padding: 20px 20px 20px 20px;
 }
 

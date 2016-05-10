@@ -100,6 +100,7 @@ static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBoo
 static void photo_booth_setup_window (PhotoBooth *pb);
 static void photo_booth_video_widget_ready (PhotoBooth *pb);
 static gboolean photo_booth_preview (PhotoBooth *pb);
+static gboolean photo_booth_preview_ready (PhotoBooth *pb);
 static void photo_booth_snapshot_start (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb);
@@ -886,10 +887,22 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	}
 	int ret = gst_element_link (pb->video_bin, pb->output_bin);
 	gst_element_set_state (pb->video_bin, GST_STATE_PLAYING);
-	photo_booth_change_state (pb, PB_STATE_PREVIEW);
+	int cooldown_delay = 2000;
+	if (priv->state == PB_STATE_NONE)
+		cooldown_delay = 10;
+	photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
+	gtk_label_set_text (priv->win->status, _("Please wait..."));
+	g_timeout_add (cooldown_delay, (GSourceFunc) photo_booth_preview_ready, pb);
 	GST_DEBUG_BIN_TO_DOT_FILE (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_preview.dot");
-	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	SEND_COMMAND (pb, CONTROL_VIDEO);
+	return FALSE;
+}
+
+static gboolean photo_booth_preview_ready (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	photo_booth_change_state (pb, PB_STATE_PREVIEW);
+	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	return FALSE;
 }
 
@@ -909,6 +922,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		case PB_STATE_TAKING_PHOTO:
 		case PB_STATE_PROCESS_PHOTO:
 		case PB_STATE_PRINTING:
+		case PB_STATE_PREVIEW_COOLDOWN:
 			GST_DEBUG_OBJECT (pb, "BUSY... ignore event!");
 			break;
 		case PB_STATE_WAITING_FOR_ANSWER:
@@ -920,8 +934,8 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		default:
 			break;
 	}
-	if (priv->prints_remaining < 1)
-		photo_booth_get_printer_status (pb);
+// 	if (priv->prints_remaining < 1)
+// 		photo_booth_get_printer_status (pb);
 }
 
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
@@ -1536,6 +1550,7 @@ const gchar* photo_booth_state_get_name (PhotoboothState state)
 	switch (state) {
 		case PB_STATE_NONE: return "PB_STATE_NONE";break;
 		case PB_STATE_PREVIEW: return "PB_STATE_PREVIEW";break;
+		case PB_STATE_PREVIEW_COOLDOWN: return "PB_STATE_PREVIEW_COOLDOWN";break;
 		case PB_STATE_COUNTDOWN: return "PB_STATE_COUNTDOWN";break;
 		case PB_STATE_TAKING_PHOTO: return "PB_STATE_TAKING_PHOTO";break;
 		case PB_STATE_PROCESS_PHOTO: return "PB_STATE_PROCESS_PHOTO";break;
