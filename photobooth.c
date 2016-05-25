@@ -522,13 +522,6 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 			}
 			timeout = 5000;
 		}
-		else if (state == CAPTURE_UNPAUSE && !pb->cam_info)
-		{
-			if (photo_booth_cam_init (&pb->cam_info))
-				state = CAPTURE_VIDEO;
-			else
-				state = CAPTURE_INIT;
-		}
 		else if (state == CAPTURE_PAUSED)
 			timeout = 1000;
 		else
@@ -617,7 +610,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					break;
 				case CONTROL_UNPAUSE:
 					GST_DEBUG_OBJECT (pb, "CONTROL_UNPAUSE!");
-					state = CAPTURE_UNPAUSE;
+					state = CAPTURE_INIT;
 					break;
 				case CONTROL_VIDEO:
 					GST_DEBUG_OBJECT (pb, "CONTROL_VIDEO");
@@ -1009,6 +1002,14 @@ static gboolean photo_booth_screensaver (PhotoBooth *pb)
 		gst_object_unref (pad);
 		gst_element_unlink (pb->video_bin, pb->video_sink);
 	}
+	if (priv->sink_block_id)
+	{
+		pad = gst_element_get_static_pad (pb->video_sink, "sink");
+		GST_DEBUG_OBJECT (pad, "showing screensaver! unblock video_sink...");
+		gst_pad_remove_probe (pad, priv->sink_block_id);
+		gst_object_unref (pad);
+		gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
+	}
 
 	SEND_COMMAND (pb, CONTROL_PAUSE);
 
@@ -1033,6 +1034,7 @@ static gboolean photo_booth_screensaver (PhotoBooth *pb)
 static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	photo_booth_change_state (pb, PB_STATE_NONE);
 
 	GstPad *pad;
 	pad = gst_element_get_static_pad (pb->video_sink, "sink");
@@ -1048,7 +1050,6 @@ static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 	gst_object_unref (pb->video_sink);
 
 	SEND_COMMAND (pb, CONTROL_UNPAUSE);
-	photo_booth_preview (pb);
 
 	return FALSE;
 }
@@ -1082,12 +1083,16 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		{
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_yes));
 			SEND_COMMAND (pb, CONTROL_UNPAUSE);
-			photo_booth_preview (pb);
 			break;
 		}
 		case PB_STATE_SCREENSAVER:
 		{
 			photo_booth_screensaver_stop (pb);
+			break;
+		}
+		case PB_STATE_NONE:
+		{
+			photo_booth_screensaver (pb);
 			break;
 		}
 		default:
