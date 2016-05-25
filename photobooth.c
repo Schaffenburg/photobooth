@@ -326,12 +326,14 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				value = g_strdup(val);
 				g_hash_table_insert (G_strings_table, key, value);
 				GST_LOG ("key %u/%u:\t'%s' => '%s'", keyidx, num_keys-1, key, value);
+				g_free (val);
 			}
 			if (error)
 			{
 				GST_INFO ( "can't read string: %s", error->message);
 				g_error_free (error);
 			}
+			g_strfreev (keys);
 		}
 		if (g_key_file_has_group (gkf, "general"))
 		{
@@ -346,6 +348,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				{
 					gchar *cur = g_get_current_dir ();
 					audioabsfilename = g_strdup_printf ("%s/%s", cur, audiofile);
+					g_free (cur);
 				}
 				else
 					audioabsfilename = g_strdup (audiofile);
@@ -363,6 +366,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				{
 					gchar *cur = g_get_current_dir ();
 					screensaverabsfilename = g_strdup_printf ("%s/%s", cur, screensaverfile);
+					g_free (cur);
 				}
 				else
 					screensaverabsfilename = g_strdup (screensaverfile);
@@ -391,6 +395,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			priv->cam_icc_profile = g_key_file_get_string (gkf, "camera", "icc_profile", NULL);
 		}
 	}
+	g_key_file_free (gkf);
 	if (error)
 	{
 		GST_INFO ( "can't open settings file %s: %s", filename, error->message);
@@ -447,6 +452,8 @@ static gboolean photo_booth_cam_close (CameraInfo **cam_info)
 	g_mutex_lock (&(*cam_info)->mutex);
 	retval = gp_camera_exit((*cam_info)->camera, (*cam_info)->context);
 	GST_DEBUG ("gp_camera_exit returned %i", retval);
+	gp_camera_free ((*cam_info)->camera);
+	gp_context_unref ((*cam_info)->context);
 	g_mutex_unlock (&(*cam_info)->mutex);
 	g_mutex_clear (&(*cam_info)->mutex);
 	free (*cam_info);
@@ -456,7 +463,6 @@ static gboolean photo_booth_cam_close (CameraInfo **cam_info)
 
 static void photo_booth_flush_pipe (int fd)
 {
-	GST_DEBUG ("flushing");
 	int rlen = 0;
 	unsigned char buf[1024];
 	const int flags = fcntl(fd, F_GETFL, 0);
@@ -464,10 +470,8 @@ static void photo_booth_flush_pipe (int fd)
 	while (rlen != -1)
 	{
 		rlen = read (fd, buf, sizeof(buf));
-		GST_DEBUG ("flushed %i", rlen);
 	}
 	fcntl (fd, F_SETFL, flags ^ O_NONBLOCK);
-	GST_DEBUG ("finished flushing");
 }
 
 static void photo_booth_quit_signal (PhotoBooth *pb)
