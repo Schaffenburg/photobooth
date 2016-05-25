@@ -27,7 +27,8 @@
 #define CONTROL_PRETRIGGER     '2'     /* pretrigger */
 #define CONTROL_PHOTO          '3'     /* photo capture */
 #define CONTROL_PAUSE          '4'     /* pause capture */
-#define CONTROL_STOP           '0'     /* stop capture thread */
+#define CONTROL_UNPAUSE        '5'     /* unpause capture */
+#define CONTROL_QUIT           '0'     /* quit capture thread */
 #define CONTROL_SOCKETS(src)   src->control_sock
 #define WRITE_SOCKET(src)      src->control_sock[1]
 #define READ_SOCKET(src)       src->control_sock[0]
@@ -67,8 +68,9 @@ typedef enum
 	CAPTURE_PRETRIGGER,
 	CAPTURE_PHOTO,
 	CAPTURE_PAUSED,
-	CAPTURE_STOP,
+	CAPTURE_UNPAUSE,
 	CAPTURE_FAILED,
+	CAPTURE_QUIT,
 } PhotoboothCaptureThreadState;
 
 typedef enum
@@ -80,7 +82,8 @@ typedef enum
 	PB_STATE_TAKING_PHOTO,
 	PB_STATE_PROCESS_PHOTO,
 	PB_STATE_WAITING_FOR_ANSWER,
-	PB_STATE_PRINTING
+	PB_STATE_PRINTING,
+	PB_STATE_SCREENSAVER
 } PhotoboothState;
 
 gchar *G_template_filename;
@@ -107,7 +110,7 @@ struct _PhotoBooth
 	GstElement *pipeline;
 	GstElement *video_bin;
 	GstElement *photo_bin;
-	GstElement *output_bin;
+	GstElement *video_sink;
 
 	int video_fd;
 	gint timeout_id;
