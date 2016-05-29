@@ -48,6 +48,10 @@ struct _PhotoBoothPrivate
 	guint32            countdown;
 	gchar             *overlay_image;
 
+	gchar             *save_path_template;
+	guint              photos_taken, photos_printed;
+	guint              save_filename_count;
+
 	gchar             *printer_backend;
 	gint               print_dpi, print_width, print_height;
 	gdouble            print_x_offset, print_y_offset;
@@ -78,6 +82,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_CONFIG "default.ini"
 #define PREVIEW_FPS 24
 #define DEFAULT_COUNTDOWN 5
+#define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
@@ -219,6 +224,9 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->screensaver_timeout = DEFAULT_SCREENSAVER_TIMEOUT;
 	priv->screensaver_timeout_id = 0;
 	priv->last_play_pos = GST_CLOCK_TIME_NONE;
+	priv->save_path_template = g_strdup (DEFAULT_SAVE_PATH_TEMPLATE);
+	priv->photos_taken = priv->photos_printed = 0;
+	priv->save_filename_count = 0;
 
 	G_stylesheet_filename = NULL;
 	G_template_filename = NULL;
@@ -292,6 +300,7 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->print_icc_profile);
 	g_free (priv->cam_icc_profile);
 	g_free (priv->overlay_image);
+	g_free (priv->save_path_template);
 	g_hash_table_destroy (G_strings_table);
 	g_mutex_clear (&priv->processing_mutex);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
@@ -325,7 +334,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				key = g_strdup(keys[keyidx]);
 				value = g_strdup(val);
 				g_hash_table_insert (G_strings_table, key, value);
-				GST_LOG ("key %u/%u:\t'%s' => '%s'", keyidx, num_keys-1, key, value);
+				GST_TRACE ("key %u/%u:\t'%s' => '%s'", keyidx, num_keys-1, key, value);
 				g_free (val);
 			}
 			if (error)
@@ -344,11 +353,11 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			if (audiofile)
 			{
 				gchar *audioabsfilename;
-				if (audiofile[0] != '/')
+				if (!g_path_is_absolute (audiofile))
 				{
-					gchar *cur = g_get_current_dir ();
-					audioabsfilename = g_strdup_printf ("%s/%s", cur, audiofile);
-					g_free (cur);
+					gchar *cdir = g_get_current_dir ();
+					audioabsfilename = g_strdup_printf ("%s/%s", cdir, audiofile);
+					g_free (cdir);
 				}
 				else
 					audioabsfilename = g_strdup (audiofile);
@@ -362,17 +371,34 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			if (screensaverfile)
 			{
 				gchar *screensaverabsfilename;
-				if (screensaverfile[0] != '/')
+				if (!g_path_is_absolute (screensaverfile))
 				{
-					gchar *cur = g_get_current_dir ();
-					screensaverabsfilename = g_strdup_printf ("%s/%s", cur, screensaverfile);
-					g_free (cur);
+					gchar *cdir = g_get_current_dir ();
+					screensaverabsfilename = g_strdup_printf ("%s/%s", cdir, screensaverfile);
+					g_free (cdir);
 				}
 				else
 					screensaverabsfilename = g_strdup (screensaverfile);
 				priv->screensaver_uri = g_filename_to_uri (screensaverabsfilename, NULL, NULL);
 				g_free (screensaverfile);
 				g_free (screensaverabsfilename);
+			}
+			gchar *save_path_template = g_key_file_get_string (gkf, "general", "save_path_template", NULL);
+			if (save_path_template)
+			{
+				gchar *cdir;
+				if (!g_path_is_absolute (save_path_template))
+				{
+					cdir = g_get_current_dir ();
+					priv->save_path_template = g_strdup_printf ("%s/%s", cdir, save_path_template);
+					g_free (cdir);
+				}
+				else
+				{
+					cdir = g_path_get_dirname (save_path_template);
+					priv->save_path_template = g_strdup (save_path_template);
+				}
+				g_free (save_path_template);
 			}
 		}
 		if (g_key_file_has_group (gkf, "printer"))
@@ -395,6 +421,49 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			priv->cam_icc_profile = g_key_file_get_string (gkf, "camera", "icc_profile", NULL);
 		}
 	}
+
+	gchar *save_path_basename = g_path_get_basename (priv->save_path_template);
+	gchar *pos = g_strstr_len ((const gchar*) save_path_basename, strlen (save_path_basename), "%");
+	if (pos)
+	{
+		gchar *filenameprefix = g_strndup (save_path_basename, pos-save_path_basename);
+		GDir *save_dir;
+		GError *error = NULL;
+		gchar *cdir = g_path_get_dirname (priv->save_path_template);
+		save_dir = g_dir_open ((const gchar*)cdir, 0, &error);
+		if (error) {
+			GST_WARNING ("couldn't open save directory '%s': %s", priv->save_path_template, error->message);
+		}
+		else if (save_dir)
+		{
+			const gchar *filename;
+			GMatchInfo *match_info;
+			GRegex *regex;
+			gchar *pattern = g_strdup_printf("(?<filename>%s)(?<number>\\d+)", filenameprefix);
+			GST_TRACE ("save_path_basename regex pattern = '%s'", pattern);
+			regex = g_regex_new (pattern, 0, 0, &error);
+			if (error) {
+				g_critical ("%s\n", error->message);
+			}
+			while ((filename = g_dir_read_name (save_dir)))
+			{
+				if (g_regex_match (regex, filename, 0, &match_info))
+				{
+					gint count = atoi(g_match_info_fetch_named (match_info, "number"));
+					gchar *name = g_match_info_fetch_named (match_info, "filename");
+					if (count > priv->save_filename_count)
+						priv->save_filename_count = count;
+					GST_TRACE ("save_path_template found matching file %s (prefix %s, count %d, highest %i)", filename, name, count, priv->save_filename_count);
+					g_free (name);
+				}
+				else
+					GST_TRACE ("save_path_template unmatched file %s", filename);
+			}
+			g_dir_close (save_dir);
+		}
+	}
+	g_free (save_path_basename);
+
 	g_key_file_free (gkf);
 	if (error)
 	{
@@ -1350,7 +1419,8 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	GstFlowReturn flowret;
 	GstPad *pad;
 
-	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_taken size=%lu", pb->cam_info->size);
+	priv->photos_taken++;
+	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_taken size=%lu photos_taken=%i", pb->cam_info->size, priv->photos_taken);
 	gtk_label_set_text (priv->win->status, _("Processing photo..."));
 
 	appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
@@ -1427,7 +1497,11 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	filesink = gst_element_factory_make ("filesink", "photo-filesink");
 	if (!encoder || !filesink)
 		GST_ERROR_OBJECT (pb->photo_bin, "Failed to make photo encoder");
-	g_object_set (filesink, "location", "PHOTOBOOTH-PRINT.JPG", NULL);
+	priv->save_filename_count++;
+	gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+	GST_INFO_OBJECT (pb->photo_bin, "saving photo to '%s'", filename);
+	g_object_set (filesink, "location", filename, NULL);
+	g_free (filename);
 
 	gst_bin_add_many (GST_BIN (pb->photo_bin), encoder, filesink, NULL);
 	tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
@@ -1699,13 +1773,15 @@ static void photo_booth_printing_error_dialog (PhotoBoothWindow *window, GError 
 
 static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperationResult result, gpointer user_data)
 {
-	GST_DEBUG_OBJECT (user_data, "print_done!");
 	PhotoBooth *pb;
 	PhotoBoothPrivate *priv;
 	GstMapInfo map;
 
 	pb = PHOTO_BOOTH (user_data);
 	priv = photo_booth_get_instance_private (pb);
+
+	priv->photos_printed++;
+	GST_INFO_OBJECT (user_data, "print_done photos_printed=%i", priv->photos_printed);
 
 	GError *print_error;
 	if (result == GTK_PRINT_OPERATION_RESULT_ERROR)
