@@ -156,6 +156,20 @@ gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
 	return TRUE;
 }
 
+void photo_booth_window_hide_cursor (PhotoBoothWindow *win)
+{
+	GdkDisplay *display = gdk_display_get_default ();
+	GdkCursor *cursor_blank = gdk_cursor_new_for_display (display, GDK_BLANK_CURSOR);
+	gdk_window_set_cursor (gtk_widget_get_window (GTK_WIDGET (win)), cursor_blank);
+}
+
+void photo_booth_window_show_cursor (PhotoBoothWindow *win)
+{
+	GdkDisplay *display = gdk_display_get_default ();
+	GdkCursor* cursor_arrow = gdk_cursor_new_for_display (display, GDK_ARROW);
+	gdk_window_set_cursor (gtk_widget_get_window (GTK_WIDGET (win)), cursor_arrow);
+}
+
 void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 {
 	PhotoBoothWindowPrivate *priv;

@@ -870,6 +870,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			{
 				GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_video_start");
 				GST_DEBUG ("video_bin GST_STATE_CHANGE_PAUSED_TO_PLAYING -> hide spinner!");
+				photo_booth_window_hide_cursor (priv->win);
 				photo_booth_window_set_spinner (priv->win, FALSE);
 			}
 			if (src == GST_OBJECT (priv->screensaver_playbin) && transition == GST_STATE_CHANGE_READY_TO_PAUSED)
@@ -974,6 +975,8 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	photo_booth_change_state (pb, PB_STATE_PREVIEW);
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
+	photo_booth_window_hide_cursor (priv->win);
+
 	if (priv->screensaver_timeout > 0)
 		priv->screensaver_timeout_id = g_timeout_add_seconds (priv->screensaver_timeout, (GSourceFunc) photo_booth_screensaver, pb);
 	return FALSE;
@@ -1064,6 +1067,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	priv = photo_booth_get_instance_private (pb);
 	GST_INFO_OBJECT (pb, "background clicked in state %s", photo_booth_state_get_name (priv->state));
+
 	if (priv->screensaver_timeout_id)
 	{
 		int ret = g_source_remove (priv->screensaver_timeout_id);
@@ -1102,6 +1106,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		default:
 			break;
 	}
+
 // 	if (priv->prints_remaining < 1)
 // 		photo_booth_get_printer_status (pb);
 }
@@ -1380,6 +1385,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
 			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
 			gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
+			photo_booth_window_show_cursor (priv->win);
 			gtk_label_set_text (priv->win->status, _("Print Photo? Touch background to cancel!"));
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			break;
