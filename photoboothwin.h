@@ -34,7 +34,7 @@ struct _PhotoBoothWindow
 {
 	GtkApplicationWindow parent;
 	GtkWidget *gtkgstwidget;
-	GtkButton *button_yes;
+	GtkButton *button_cancel, *button_print, *button_upload;
 	GtkLabel *status_clock, *status, *status_printer;
 };
 

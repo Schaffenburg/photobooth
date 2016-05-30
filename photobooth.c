@@ -26,6 +26,7 @@
 #include <gst/video/videooverlay.h>
 #include <gst/video/gstvideosink.h>
 #include <gst/app/app.h>
+#include <curl/curl.h>
 #include "photobooth.h"
 #include "photoboothwin.h"
 
@@ -65,10 +66,10 @@ struct _PhotoBoothPrivate
 	gboolean           cam_reeinit_before_snapshot, cam_reeinit_after_snapshot;
 	gchar             *cam_icc_profile;
 
-	GstElement	  *audio_pipeline;
-	GstElement	  *audio_playbin;
+	GstElement        *audio_pipeline;
+	GstElement        *audio_playbin;
 
-	GstElement	  *screensaver_playbin;
+	GstElement        *screensaver_playbin;
 
 	gchar             *countdown_audio_uri;
 
@@ -76,6 +77,9 @@ struct _PhotoBoothPrivate
 	gint               screensaver_timeout;
 	guint              screensaver_timeout_id;
 	GstClockTime       last_play_pos;
+
+	gchar             *facebook_put_uri;
+	gint               facebook_put_timeout;
 };
 
 #define MOVIEPIPE "moviepipe.mjpg"
@@ -103,7 +107,8 @@ static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win);
-void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win);
+void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win);
+void photo_booth_cancel (PhotoBooth *pb);
 
 /* general private functions */
 const gchar* photo_booth_state_get_name (PhotoboothState state);
@@ -143,12 +148,17 @@ static void photo_booth_free_print_buffer (PhotoBooth *pb);
 
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
+void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win);
 static void photo_booth_print (PhotoBooth *pb);
-void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win);
 static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintContext *context, gpointer user_data);
 static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data);
 static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperationResult result, gpointer user_data);
 static void photo_booth_printing_error_dialog (PhotoBoothWindow *window, GError *print_error);
+
+/* upload functions */
+void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win);
+static gboolean photo_booth_facebook_post (PhotoBooth *pb);
+static gboolean photo_booth_upload_timedout (PhotoBooth *pb);
 
 static void photo_booth_class_init (PhotoBoothClass *klass)
 {
@@ -227,6 +237,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->save_path_template = g_strdup (DEFAULT_SAVE_PATH_TEMPLATE);
 	priv->photos_taken = priv->photos_printed = 0;
 	priv->save_filename_count = 0;
+	priv->facebook_put_timeout = 0;
+	priv->facebook_put_uri = NULL;
 
 	G_stylesheet_filename = NULL;
 	G_template_filename = NULL;
@@ -420,6 +432,11 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			priv->cam_reeinit_after_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_after_snapshot", NULL);
 			priv->cam_icc_profile = g_key_file_get_string (gkf, "camera", "icc_profile", NULL);
 		}
+		if (g_key_file_has_group (gkf, "upload"))
+		{
+			priv->facebook_put_uri = g_key_file_get_string (gkf, "upload", "facebook_put_uri", NULL);
+			priv->facebook_put_timeout = g_key_file_get_integer (gkf, "upload", "facebook_put_timeout", NULL);
+		}
 	}
 
 	gchar *save_path_basename = g_path_get_basename (priv->save_path_template);
@@ -506,10 +523,12 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 	retval = gp_camera_init((*cam_info)->camera, (*cam_info)->context);
 	GST_DEBUG ("gp_camera_init returned %d cam_info@%p camera@%p", retval, *cam_info, (*cam_info)->camera);
 	g_mutex_unlock (&(*cam_info)->mutex);
+	if (retval == GP_ERROR_IO_USB_CLAIM)
+	{
+		g_usleep (G_USEC_PER_SEC);
+	}
 	if (retval != GP_OK) {
-		g_mutex_clear (&(*cam_info)->mutex);
-		free (*cam_info);
-		*cam_info = NULL;
+		photo_booth_cam_close (&(*cam_info));
 		return FALSE;
 	}
 	return TRUE;
@@ -1154,12 +1173,14 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		case PB_STATE_PROCESS_PHOTO:
 		case PB_STATE_PRINTING:
 		case PB_STATE_PREVIEW_COOLDOWN:
+		{
 			GST_DEBUG_OBJECT (pb, "BUSY... ignore event!");
 			break;
-		case PB_STATE_WAITING_FOR_ANSWER:
+		}
+		case PB_STATE_ASK_PRINT:
+		case PB_STATE_ASK_UPLOAD:
 		{
-			gtk_widget_hide (GTK_WIDGET (priv->win->button_yes));
-			SEND_COMMAND (pb, CONTROL_UNPAUSE);
+// 			photo_booth_button_cancel_clicked (pb);
 			break;
 		}
 		case PB_STATE_SCREENSAVER:
@@ -1454,20 +1475,21 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		{
 			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
 			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
-			gtk_widget_show (GTK_WIDGET (priv->win->button_yes));
+			gtk_widget_show (GTK_WIDGET (priv->win->button_print));
+			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
-			gtk_label_set_text (priv->win->status, _("Print Photo? Touch background to cancel!"));
+			gtk_label_set_text (priv->win->status, _("Print Photo?"));
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			break;
 		}
 		case PB_STATE_PROCESS_PHOTO:
 		{
-			photo_booth_change_state (pb, PB_STATE_WAITING_FOR_ANSWER);
+			photo_booth_change_state (pb, PB_STATE_ASK_PRINT);
 			GST_DEBUG_OBJECT (pb, "second buffer caught -> will be caught for printing. waiting for answer, hide spinner");
 			photo_booth_window_set_spinner (priv->win, FALSE);
 			break;
 		}
-		case PB_STATE_WAITING_FOR_ANSWER:
+		case PB_STATE_ASK_PRINT:
 		{
 			GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe");
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
@@ -1630,16 +1652,54 @@ static void photo_booth_free_print_buffer (PhotoBooth *pb)
 		gst_object_unref (appsink);
 }
 
-void photo_booth_button_yes_clicked (GtkButton *button, PhotoBoothWindow *win)
+void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
-	GST_DEBUG_OBJECT (pb, "on_button_yes_clicked");
-	if (priv->state == PB_STATE_WAITING_FOR_ANSWER)
+	GST_DEBUG_OBJECT (pb, "photo_booth_button_print_clicked");
+	if (priv->state == PB_STATE_ASK_PRINT)
 	{
 		photo_booth_print (pb);
 	}
+}
+
+void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+	GST_DEBUG_OBJECT (pb, "photo_booth_button_upload_clicked");
+	if (priv->state == PB_STATE_ASK_UPLOAD)
+	{
+		photo_booth_window_set_spinner (priv->win, TRUE);
+		gtk_label_set_text (priv->win->status, _("Uploading..."));
+		g_timeout_add (10, (GSourceFunc)photo_booth_facebook_post, pb);
+	}
+}
+
+void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	GST_DEBUG_OBJECT (button, "photo_booth_button_cancel_clicked");
+	photo_booth_cancel (pb);
+}
+
+void photo_booth_cancel (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+	switch (priv->state) {
+		case PB_STATE_ASK_PRINT:
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+			break;
+		case PB_STATE_ASK_UPLOAD:
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
+			break;
+		default: return;
+	}
+	gtk_widget_hide (GTK_WIDGET (priv->win->button_cancel));
+	SEND_COMMAND (pb, CONTROL_UNPAUSE);
 }
 
 #define ALWAYS_PRINT_DIALOG 1
@@ -1651,7 +1711,7 @@ static void photo_booth_print (PhotoBooth *pb)
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_photo_print");
 	photo_booth_get_printer_status (pb);
 	GST_INFO_OBJECT (pb, "PRINT! prints_remaining=%i", priv->prints_remaining);
-	gtk_widget_hide (GTK_WIDGET (priv->win->button_yes));
+	gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
 
 #ifdef ALWAYS_PRINT_DIALOG
 	if (1)
@@ -1791,8 +1851,71 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 		g_error_free (print_error);
 	}
 	g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
-	photo_booth_preview (pb);
+
+	if (priv->facebook_put_uri)
+	{
+		gtk_widget_show (GTK_WIDGET (priv->win->button_upload));
+		gtk_label_set_text (priv->win->status, _("Upload photo?"));
+		g_timeout_add_seconds (priv->facebook_put_timeout, (GSourceFunc) photo_booth_upload_timedout, pb);
+		photo_booth_change_state (pb, PB_STATE_ASK_UPLOAD);
+	}
+	else
+		photo_booth_preview (pb);
+
 	return;
+}
+
+size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
+{
+	int i;
+	for (i = 0; i < size*nmemb; i++)
+		g_string_append_c((GString *)buf, ((gchar *)ptr)[i]);
+	return i;
+}
+
+static gboolean photo_booth_facebook_post (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	CURLcode res;
+	CURL *curl;
+	priv = photo_booth_get_instance_private (pb);
+	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_facebook_post");
+	curl = curl_easy_init();
+	if (curl)
+	{
+		struct curl_httppost* post = NULL;
+		struct curl_httppost* last = NULL;
+		GString *buf = g_string_new("");
+		gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+		GST_INFO_OBJECT (pb, "photo_booth_facebook_post '%s' to '%s'...", filename, priv->facebook_put_uri);
+		curl_formadd (&post, &last, CURLFORM_COPYNAME, "image", CURLFORM_FILE, filename, CURLFORM_CONTENTTYPE, "image/jpeg", CURLFORM_END);
+		curl_easy_setopt (curl, CURLOPT_USERAGENT, "Schaffenburg Photobooth");
+		curl_easy_setopt (curl, CURLOPT_URL, priv->facebook_put_uri);
+		curl_easy_setopt (curl, CURLOPT_POST, 1L);
+		curl_easy_setopt (curl, CURLOPT_HTTPPOST, post);
+		curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, _curl_write_func);
+		curl_easy_setopt (curl, CURLOPT_WRITEDATA, buf);
+		res = curl_easy_perform (curl);
+		if (res != CURLE_OK)
+		{
+			GST_WARNING ("curl_easy_perform() failed %s", curl_easy_strerror(res));
+		}
+		curl_easy_cleanup (curl);
+		curl_formfree (post);
+		g_free (filename);
+		GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
+		g_string_free (buf, TRUE);
+		photo_booth_cancel (pb);
+	}
+	photo_booth_window_set_spinner (priv->win, FALSE);
+	return FALSE;
+}
+
+static gboolean photo_booth_upload_timedout (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	photo_booth_cancel (pb);
+	return FALSE;
 }
 
 const gchar* photo_booth_state_get_name (PhotoboothState state)
@@ -1804,8 +1927,9 @@ const gchar* photo_booth_state_get_name (PhotoboothState state)
 		case PB_STATE_COUNTDOWN: return "PB_STATE_COUNTDOWN";break;
 		case PB_STATE_TAKING_PHOTO: return "PB_STATE_TAKING_PHOTO";break;
 		case PB_STATE_PROCESS_PHOTO: return "PB_STATE_PROCESS_PHOTO";break;
-		case PB_STATE_WAITING_FOR_ANSWER: return "PB_STATE_WAITING_FOR_ANSWER";break;
+		case PB_STATE_ASK_PRINT: return "PB_STATE_ASK_PRINT";break;
 		case PB_STATE_PRINTING: return "PB_STATE_PRINTING";break;
+		case PB_STATE_ASK_UPLOAD: return "PB_STATE_ASK_UPLOAD";break;
 		case PB_STATE_SCREENSAVER: return "PB_STATE_SCREENSAVER";break;
 		default: return "STATE UNKOWN!";break;
 	}

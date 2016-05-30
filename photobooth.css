@@ -1,3 +1,22 @@
+button {
+	background: rgba (255, 255, 82, 0.8);
+	font-weight: bold;
+	font-size: 24px;
+	padding: 20px 20px 20px 20px;
+}
+
+button.print {
+	background: rgba (128, 255, 82, 0.8);
+}
+
+button.upload {
+	background: rgba (82, 166, 255, 0.8);
+}
+
+button.cancel {
+	background: rgba (255, 82, 82, 0.8);
+}
+
 .transparentbg {
 	background: rgba (0, 0, 0, 0);
 }
@@ -10,14 +29,6 @@
 	padding: 0 0 0 0;
 }
 
-.button_yes {
-	color: rgba (0, 0, 110, 1);
-	background: rgba (168, 233, 255, 0.9);
-	font-weight: bold;
-	font-size: 60px;
-	padding: 20px 20px 20px 20px;
-}
-
 .statusbox {
 	background: rgba (0, 0, 0, 0.8);
 }
@@ -25,6 +36,6 @@
 .status_label {
 	color: white;
 	font-weight: bold;
-	font-size: 12px;
+	font-size: 10px;
 }
 
