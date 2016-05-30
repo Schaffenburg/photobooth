@@ -80,6 +80,8 @@ struct _PhotoBoothPrivate
 
 	gchar             *facebook_put_uri;
 	gint               facebook_put_timeout;
+	GThread           *upload_thread;
+	GMutex             upload_mutex;
 };
 
 #define MOVIEPIPE "moviepipe.mjpg"
@@ -157,7 +159,7 @@ static void photo_booth_printing_error_dialog (PhotoBoothWindow *window, GError 
 
 /* upload functions */
 void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win);
-static gboolean photo_booth_facebook_post (PhotoBooth *pb);
+static void photo_booth_facebook_post_thread_func (PhotoBooth *pb);
 static gboolean photo_booth_upload_timedout (PhotoBooth *pb);
 
 static void photo_booth_class_init (PhotoBoothClass *klass)
@@ -239,12 +241,14 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->save_filename_count = 0;
 	priv->facebook_put_timeout = 0;
 	priv->facebook_put_uri = NULL;
+	priv->upload_thread = NULL;
 
 	G_stylesheet_filename = NULL;
 	G_template_filename = NULL;
 
 	G_strings_table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 	g_mutex_init (&priv->processing_mutex);
+	g_mutex_init (&priv->upload_mutex);
 }
 
 static void photo_booth_change_state (PhotoBooth *pb, PhotoboothState newstate)
@@ -298,6 +302,8 @@ static void photo_booth_finalize (GObject *object)
 		close (pb->video_fd);
 		unlink (MOVIEPIPE);
 	}
+	if (priv->upload_thread)
+		g_thread_join (priv->upload_thread);
 }
 
 static void photo_booth_dispose (GObject *object)
@@ -315,6 +321,7 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->save_path_template);
 	g_hash_table_destroy (G_strings_table);
 	g_mutex_clear (&priv->processing_mutex);
+	g_mutex_clear (&priv->upload_mutex);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
 	g_free (G_stylesheet_filename);
 	g_free (G_template_filename);
@@ -1050,8 +1057,11 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	int cooldown_delay = 2000;
 	if (priv->state == PB_STATE_NONE)
 		cooldown_delay = 10;
-	photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
-	gtk_label_set_text (priv->win->status, _("Please wait..."));
+	if (priv->state != PB_STATE_UPLOADING)
+	{
+		photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
+		gtk_label_set_text (priv->win->status, _("Please wait..."));
+	}
 	g_timeout_add (cooldown_delay, (GSourceFunc) photo_booth_preview_ready, pb);
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_preview");
 	SEND_COMMAND (pb, CONTROL_VIDEO);
@@ -1061,6 +1071,12 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	if (priv->state == PB_STATE_UPLOADING)
+	{
+		GST_DEBUG_OBJECT (pb, "still uploading, wait another bit");
+		return TRUE;
+	}
+
 	photo_booth_change_state (pb, PB_STATE_PREVIEW);
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	photo_booth_window_hide_cursor (priv->win);
@@ -1674,7 +1690,8 @@ void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win
 	{
 		photo_booth_window_set_spinner (priv->win, TRUE);
 		gtk_label_set_text (priv->win->status, _("Uploading..."));
-		g_timeout_add (10, (GSourceFunc)photo_booth_facebook_post, pb);
+		priv->upload_thread = g_thread_try_new ("upload", (GThreadFunc) photo_booth_facebook_post_thread_func, pb, NULL);
+		photo_booth_cancel (pb);
 	}
 }
 
@@ -1873,16 +1890,18 @@ size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
 	return i;
 }
 
-static gboolean photo_booth_facebook_post (PhotoBooth *pb)
+void photo_booth_facebook_post_thread_func (PhotoBooth* pb)
 {
 	PhotoBoothPrivate *priv;
 	CURLcode res;
 	CURL *curl;
 	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_facebook_post");
+	g_mutex_lock (&priv->upload_mutex);
 	curl = curl_easy_init();
 	if (curl)
 	{
+		photo_booth_change_state (pb, PB_STATE_UPLOADING);
 		struct curl_httppost* post = NULL;
 		struct curl_httppost* last = NULL;
 		GString *buf = g_string_new("");
@@ -1905,10 +1924,11 @@ static gboolean photo_booth_facebook_post (PhotoBooth *pb)
 		g_free (filename);
 		GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
 		g_string_free (buf, TRUE);
-		photo_booth_cancel (pb);
 	}
+	g_mutex_unlock (&priv->upload_mutex);
+	photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
 	photo_booth_window_set_spinner (priv->win, FALSE);
-	return FALSE;
+	return;
 }
 
 static gboolean photo_booth_upload_timedout (PhotoBooth *pb)
@@ -1930,6 +1950,7 @@ const gchar* photo_booth_state_get_name (PhotoboothState state)
 		case PB_STATE_ASK_PRINT: return "PB_STATE_ASK_PRINT";break;
 		case PB_STATE_PRINTING: return "PB_STATE_PRINTING";break;
 		case PB_STATE_ASK_UPLOAD: return "PB_STATE_ASK_UPLOAD";break;
+		case PB_STATE_UPLOADING: return "PB_STATE_UPLOADING";break;
 		case PB_STATE_SCREENSAVER: return "PB_STATE_SCREENSAVER";break;
 		default: return "STATE UNKOWN!";break;
 	}
