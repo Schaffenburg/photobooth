@@ -29,6 +29,7 @@
 #include <curl/curl.h>
 #include "photobooth.h"
 #include "photoboothwin.h"
+#include "photoboothled.h"
 
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
@@ -82,6 +83,8 @@ struct _PhotoBoothPrivate
 	gint               facebook_put_timeout;
 	GThread           *upload_thread;
 	GMutex             upload_mutex;
+
+	PhotoBoothLed     *led;
 };
 
 #define MOVIEPIPE "moviepipe.mjpg"
@@ -243,6 +246,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->facebook_put_uri = NULL;
 	priv->upload_thread = NULL;
 
+	priv->led = photo_booth_led_new ();
+
 	G_stylesheet_filename = NULL;
 	G_template_filename = NULL;
 
@@ -304,6 +309,7 @@ static void photo_booth_finalize (GObject *object)
 	}
 	if (priv->upload_thread)
 		g_thread_join (priv->upload_thread);
+	g_object_unref (priv->led);
 }
 
 static void photo_booth_dispose (GObject *object)
@@ -679,8 +685,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 			if (pb->cam_info)
 			{
 				gtk_label_set_text (priv->win->status, _("Taking photo..."));
+				photo_booth_led_flash (priv->led);
 				ret = photo_booth_take_photo (pb->cam_info);
-				if (ret)
+				photo_booth_led_black (priv->led);
+				if (ret && pb->cam_info->size)
 				{
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
 					if (priv->cam_reeinit_after_snapshot)
@@ -1310,6 +1318,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 		g_object_set (priv->audio_playbin, "uri", priv->countdown_audio_uri, NULL);
 		gst_element_set_state (priv->audio_pipeline, GST_STATE_PLAYING);
 	}
+	photo_booth_led_countdown (priv->led, priv->countdown);
 }
 
 static gboolean photo_booth_snapshot_prepare (PhotoBooth *pb)
