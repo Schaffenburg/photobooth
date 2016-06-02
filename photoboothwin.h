@@ -50,6 +50,8 @@ void                    photo_booth_window_set_spinner      (PhotoBoothWindow *w
 void                    photo_booth_window_start_countdown  (PhotoBoothWindow *win, gint count);
 void                    photo_booth_window_hide_cursor      (PhotoBoothWindow *win);
 void                    photo_booth_window_show_cursor      (PhotoBoothWindow *win);
+void                    photo_booth_window_set_copies_show  (PhotoBoothWindow *win, gint min, gint max, gint def);
+gint                    photo_booth_window_get_copies_hide  (PhotoBoothWindow *win);
 
 G_END_DECLS
 

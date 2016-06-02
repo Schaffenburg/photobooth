@@ -26,6 +26,7 @@ struct _PhotoBoothWindowPrivate
 	GtkWidget *overlay;
 	GtkWidget *spinner, *statusbar;
 	GtkLabel *countdown_label;
+	GtkScale *copies;
 	gint countdown;
 };
 
@@ -62,6 +63,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, overlay);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
+	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, copies);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_cancel);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_print);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_upload);
@@ -75,6 +77,8 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_widget_init_template (GTK_WIDGET (win));
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
+	GST_DEBUG_OBJECT (priv->countdown_label, "countdown_label @%p", priv->countdown_label);
+	GST_DEBUG_OBJECT (priv->copies, "copies @%p", priv->copies);
 	GdkScreen *screen = gdk_screen_get_default ();
 	gtk_window_fullscreen_on_monitor (GTK_WINDOW (win), screen, 0);
 	if (G_stylesheet_filename)
@@ -185,6 +189,42 @@ void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 	_pbw_tick_countdown(win);
 	gtk_widget_show (GTK_WIDGET (priv->countdown_label));
 	g_timeout_add (1000, (GSourceFunc) _pbw_tick_countdown, win);
+}
+
+void photo_booth_window_set_copies_show (PhotoBoothWindow *win, gint min, gint max, gint def)
+{
+	PhotoBoothWindowPrivate *priv;
+	priv = photo_booth_window_get_instance_private (win);
+	GST_DEBUG ("photo_booth_window_set_copies_limit [%i-%i]", min, max);
+	GtkAdjustment *adj = gtk_range_get_adjustment (GTK_RANGE (priv->copies));
+	gtk_adjustment_set_lower (adj, (gdouble) min);
+	gtk_adjustment_set_upper (adj, (gdouble) max);
+	priv = photo_booth_window_get_instance_private (win);
+	gtk_range_set_value (GTK_RANGE (priv->copies), (gdouble) def);
+	for (int x = min; x <= max; x++)
+	{
+		gtk_scale_add_mark (priv->copies, (gdouble) x, GTK_POS_BOTTOM, NULL);
+	}
+	gtk_widget_show (GTK_WIDGET (priv->copies));
+}
+
+gint photo_booth_window_get_copies_hide (PhotoBoothWindow *win)
+{
+	PhotoBoothWindowPrivate *priv;
+	gint copies = 0;
+	priv = photo_booth_window_get_instance_private (win);
+	copies = (gint) gtk_range_get_value (GTK_RANGE (priv->copies));
+	gtk_widget_hide (GTK_WIDGET (priv->copies));
+	GST_DEBUG ("photo_booth_window_get_copies_hide %i", copies);
+	return copies;
+}
+
+gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, gpointer user_data)
+{
+	int intval = (int) value;
+	if (intval == 1)
+		return g_strdup_printf (_("1 print"));
+	return g_strdup_printf (_("%d prints"), intval);
 }
 
 PhotoBoothWindow * photo_booth_window_new (PhotoBooth *pb)

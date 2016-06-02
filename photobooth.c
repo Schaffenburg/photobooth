@@ -55,6 +55,7 @@ struct _PhotoBoothPrivate
 	guint              save_filename_count;
 
 	gchar             *printer_backend;
+	gint               print_copies_min, print_copies_default, print_copies_max, print_copies;
 	gint               print_dpi, print_width, print_height;
 	gdouble            print_x_offset, print_y_offset;
 	gchar             *print_icc_profile;
@@ -224,6 +225,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->preview_fps = PREVIEW_FPS;
 	priv->preview_width = PREVIEW_WIDTH;
 	priv->preview_height = PREVIEW_HEIGHT;
+	priv->print_copies_min = priv->print_copies_max = priv->print_copies_default = 1;
+	priv->print_copies = 1;
 	priv->print_dpi = PRINT_DPI;
 	priv->print_width = PRINT_WIDTH;
 	priv->print_height = PRINT_HEIGHT;
@@ -326,6 +329,7 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->overlay_image);
 	g_free (priv->save_path_template);
 	g_hash_table_destroy (G_strings_table);
+	G_strings_table = NULL;
 	g_mutex_clear (&priv->processing_mutex);
 	g_mutex_clear (&priv->upload_mutex);
 	G_OBJECT_CLASS (photo_booth_parent_class)->dispose (object);
@@ -429,6 +433,9 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		if (g_key_file_has_group (gkf, "printer"))
 		{
 			priv->printer_backend = g_key_file_get_string (gkf, "printer", "backend", NULL);
+			priv->print_copies_min = g_key_file_get_integer (gkf, "printer", "copies_min", NULL);
+			priv->print_copies_max = g_key_file_get_integer (gkf, "printer", "copies_max", NULL);
+			priv->print_copies_default = g_key_file_get_integer (gkf, "printer", "copies_default", NULL);
 			priv->print_dpi = g_key_file_get_integer (gkf, "printer", "dpi", NULL);
 			priv->print_width = g_key_file_get_integer (gkf, "printer", "width", NULL);
 			priv->print_height = g_key_file_get_integer (gkf, "printer", "height", NULL);
@@ -1511,6 +1518,8 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		{
 			photo_booth_change_state (pb, PB_STATE_ASK_PRINT);
 			GST_DEBUG_OBJECT (pb, "second buffer caught -> will be caught for printing. waiting for answer, hide spinner");
+			if (priv->print_copies_min != priv->print_copies_max)
+				photo_booth_window_set_copies_show (priv->win, priv->print_copies_min, priv->print_copies_max, priv->print_copies_default);
 			photo_booth_window_set_spinner (priv->win, FALSE);
 			break;
 		}
@@ -1717,8 +1726,11 @@ void photo_booth_cancel (PhotoBooth *pb)
 	priv = photo_booth_get_instance_private (pb);
 	switch (priv->state) {
 		case PB_STATE_ASK_PRINT:
+		{
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+			photo_booth_window_get_copies_hide (priv->win);
 			break;
+		}
 		case PB_STATE_ASK_UPLOAD:
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
 			break;
@@ -1728,21 +1740,32 @@ void photo_booth_cancel (PhotoBooth *pb)
 	SEND_COMMAND (pb, CONTROL_UNPAUSE);
 }
 
+void photo_booth_copies_value_changed (GtkRange *range, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+	priv->print_copies = (int) gtk_range_get_value (range);
+	GST_DEBUG_OBJECT (range, "\n\nphoto_booth_copies_value_changed value=%d", priv->print_copies);
+}
+
 #define ALWAYS_PRINT_DIALOG 1
 
 static void photo_booth_print (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
+	gint num_copies = 0;
 	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_photo_print");
 	photo_booth_get_printer_status (pb);
 	GST_INFO_OBJECT (pb, "PRINT! prints_remaining=%i", priv->prints_remaining);
 	gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+	num_copies = photo_booth_window_get_copies_hide (priv->win);
 
 #ifdef ALWAYS_PRINT_DIALOG
 	if (1)
 #else
-	if (priv->prints_remaining > 1)
+	if (priv->prints_remaining > num_copies)
 #endif
 	{
 		gtk_label_set_text (priv->win->status, _("Printing..."));
@@ -1759,13 +1782,14 @@ static void photo_booth_print (PhotoBooth *pb)
 		printop = gtk_print_operation_new ();
 
 		if (priv->printer_settings != NULL)
-		{
-// 			action = GTK_PRINT_OPERATION_ACTION_PRINT;
-			gtk_print_operation_set_print_settings (printop, priv->printer_settings);
-		}
+			action = GTK_PRINT_OPERATION_ACTION_PRINT;
 		else
-			 action = GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG;
+		{
+			priv->printer_settings = gtk_print_settings_new ();
+			action = GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG;
+		}
 
+		gtk_print_operation_set_print_settings (printop, priv->printer_settings);
 		g_signal_connect (printop, "begin_print", G_CALLBACK (photo_booth_begin_print), NULL);
 		g_signal_connect (printop, "draw_page", G_CALLBACK (photo_booth_draw_page), pb);
 		g_signal_connect (printop, "done", G_CALLBACK (photo_booth_print_done), pb);
@@ -1778,6 +1802,7 @@ static void photo_booth_print (PhotoBooth *pb)
 		gtk_print_operation_set_default_page_setup (printop, page_setup);
 		gtk_print_operation_set_use_full_page (printop, TRUE);
 		gtk_print_operation_set_unit (printop, GTK_UNIT_POINTS);
+		gtk_print_settings_set_n_copies (priv->printer_settings, num_copies);
 
 		res = gtk_print_operation_run (printop, action, GTK_WINDOW (priv->win), &print_error);
 		if (res == GTK_PRINT_OPERATION_RESULT_ERROR)

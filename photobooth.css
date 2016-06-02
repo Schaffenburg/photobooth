@@ -39,3 +39,15 @@ button.cancel {
 	font-size: 10px;
 }
 
+.copies value {
+/*     background-color: #df784e; */
+	font-size: 24px;
+	color: rgba (188, 255, 188, 0.8);
+	text-shadow: 2px 2px 1px #0c0d24;
+	color: #BBFFBB;
+	font-weight: bold;
+}
+
+.copies marks.bottom mark indicator {
+	color: rgb (0, 50, 0);
+}

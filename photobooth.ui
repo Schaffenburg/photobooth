@@ -2,6 +2,14 @@
 <!-- Generated with glade 3.20.0 -->
 <interface>
   <requires lib="gtk+" version="3.20"/>
+  <object class="GtkAdjustment" id="adjustment_copies">
+    <property name="lower">1</property>
+    <property name="upper">1</property>
+    <property name="value">1</property>
+    <property name="step_increment">1</property>
+    <property name="page_increment">1</property>
+    <property name="page_size">0</property>
+  </object>
   <template class="PhotoBoothWindow" parent="GtkApplicationWindow">
     <property name="can_focus">False</property>
     <property name="title">Schaffenburg Photobooth</property>
@@ -13,6 +21,9 @@
         <property name="can_focus">False</property>
         <property name="events">GDK_BUTTON_PRESS_MASK</property>
         <signal name="button-press-event" handler="photo_booth_background_clicked" swapped="no"/>
+        <child>
+          <placeholder/>
+        </child>
         <child type="overlay">
           <object class="GtkLabel" id="countdown_label">
             <property name="width_request">400</property>
@@ -46,7 +57,6 @@
                 <property name="label" translatable="yes">Ausdrucken!</property>
                 <property name="width_request">360</property>
                 <property name="height_request">120</property>
-                <property name="visible">False</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">False</property>
                 <property name="margin_top">10</property>
@@ -66,7 +76,6 @@
                 <property name="label" translatable="yes">Abbrechen</property>
                 <property name="width_request">360</property>
                 <property name="height_request">120</property>
-                <property name="visible">False</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">False</property>
                 <property name="margin_top">10</property>
@@ -86,7 +95,6 @@
                 <property name="label" translatable="yes">Auf Facebook teilen</property>
                 <property name="width_request">360</property>
                 <property name="height_request">120</property>
-                <property name="visible">False</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">False</property>
                 <property name="margin_top">10</property>
@@ -99,6 +107,28 @@
               <packing>
                 <property name="x">840</property>
                 <property name="y">700</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkScale" id="copies">
+                <property name="width_request">1120</property>
+                <property name="height_request">80</property>
+                <property name="visible">False</property>
+                <property name="can_focus">True</property>
+                <property name="adjustment">adjustment_copies</property>
+                <property name="show_fill_level">True</property>
+                <property name="round_digits">0</property>
+                <property name="digits">0</property>
+                <property name="value_pos">bottom</property>
+                <signal name="format-value" handler="photo_booth_window_format_copies_value" swapped="no"/>
+                <signal name="value-changed" handler="photo_booth_copies_value_changed" swapped="no"/>
+                <style>
+                  <class name="copies"/>
+                </style>
+              </object>
+              <packing>
+                <property name="x">80</property>
+                <property name="y">100</property>
               </packing>
             </child>
             <style>
