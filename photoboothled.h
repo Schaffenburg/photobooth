@@ -16,6 +16,7 @@
 #ifndef __PHOTO_BOOTH_LED_H__
 #define __PHOTO_BOOTH_LED_H__
 
+#include <glib-object.h>
 #include <glib.h>
 
 #define LED_BLACK       'b'
@@ -42,7 +43,7 @@ struct _PhotoBoothLed
 
 struct _PhotoBoothLedClass
 {
-	GtkApplicationClass parent_class;
+	GObjectClass parent_class;
 };
 
 GType           photo_booth_led_get_type        (void);

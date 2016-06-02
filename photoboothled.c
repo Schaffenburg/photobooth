@@ -79,6 +79,7 @@ static void photo_booth_led_init (PhotoBoothLed *led)
 			tty.c_lflag |= ICANON;
 			tty.c_oflag &= ~OPOST;
 			tcsetattr(led->fd, TCSANOW, &tty);
+			tcsetattr(led->fd, TCSAFLUSH, &tty);
 			char tempbuf[32];
 			int n = read (led->fd, tempbuf, sizeof(tempbuf)-1);
 			GST_WARNING_OBJECT(led, "read %i bytes: '%s'", n, tempbuf);
