@@ -27,6 +27,9 @@
 #include <gst/video/gstvideosink.h>
 #include <gst/app/app.h>
 #include <curl/curl.h>
+// #ifdef HAVE_LIBCANBERRA
+#include <canberra-gtk.h>
+// #endif
 #include "photobooth.h"
 #include "photoboothwin.h"
 #include "photoboothled.h"
@@ -74,6 +77,8 @@ struct _PhotoBoothPrivate
 	GstElement        *screensaver_playbin;
 
 	gchar             *countdown_audio_uri;
+	gchar             *error_sound;
+	gchar             *ack_sound;
 
 	gchar             *screensaver_uri;
 	gint               screensaver_timeout;
@@ -100,6 +105,8 @@ struct _PhotoBoothPrivate
 #define PREVIEW_WIDTH 640
 #define PREVIEW_HEIGHT 424
 #define PT_PER_IN 72
+
+typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION);
 
@@ -238,6 +245,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->printer_settings = NULL;
 	priv->overlay_image = NULL;
 	priv->countdown_audio_uri = NULL;
+	priv->ack_sound = NULL;
+	priv->error_sound = NULL;
 	priv->screensaver_uri = NULL;
 	priv->screensaver_timeout = DEFAULT_SCREENSAVER_TIMEOUT;
 	priv->screensaver_timeout_id = 0;
@@ -323,6 +332,8 @@ static void photo_booth_dispose (GObject *object)
 	if (priv->printer_settings != NULL)
 		g_object_unref (priv->printer_settings);
 	g_free (priv->countdown_audio_uri);
+	g_free (priv->ack_sound);
+	g_free (priv->error_sound);
 	g_free (priv->screensaver_uri);
 	g_free (priv->print_icc_profile);
 	g_free (priv->cam_icc_profile);
@@ -378,22 +389,6 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			G_template_filename = g_key_file_get_string (gkf, "general", "template", NULL);
 			G_stylesheet_filename = g_key_file_get_string (gkf, "general", "stylesheet", NULL);
 			priv->countdown = g_key_file_get_integer (gkf, "general", "countdown", NULL);
-			gchar *audiofile = g_key_file_get_string (gkf, "general", "countdown_audio_file", NULL);
-			if (audiofile)
-			{
-				gchar *audioabsfilename;
-				if (!g_path_is_absolute (audiofile))
-				{
-					gchar *cdir = g_get_current_dir ();
-					audioabsfilename = g_strdup_printf ("%s/%s", cdir, audiofile);
-					g_free (cdir);
-				}
-				else
-					audioabsfilename = g_strdup (audiofile);
-				priv->countdown_audio_uri = g_filename_to_uri (audioabsfilename, NULL, NULL);
-				g_free (audiofile);
-				g_free (audioabsfilename);
-			}
 			priv->overlay_image = g_key_file_get_string (gkf, "general", "overlay_image", NULL);
 			priv->screensaver_timeout = g_key_file_get_integer (gkf, "general", "screensaver_timeout", NULL);
 			gchar *screensaverfile = g_key_file_get_string (gkf, "general", "screensaver_file", NULL);
@@ -429,6 +424,27 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				}
 				g_free (save_path_template);
 			}
+		}
+		if (g_key_file_has_group (gkf, "sounds"))
+		{
+			gchar *countdownaudiofile = g_key_file_get_string (gkf, "sounds", "countdown_audio_file", NULL);
+			if (countdownaudiofile)
+			{
+				gchar *audioabsfilename;
+				if (!g_path_is_absolute (countdownaudiofile))
+				{
+					gchar *cdir = g_get_current_dir ();
+					audioabsfilename = g_strdup_printf ("%s/%s", cdir, countdownaudiofile);
+					g_free (cdir);
+				}
+				else
+					audioabsfilename = g_strdup (countdownaudiofile);
+				priv->countdown_audio_uri = g_filename_to_uri (audioabsfilename, NULL, NULL);
+				g_free (countdownaudiofile);
+				g_free (audioabsfilename);
+			}
+			priv->ack_sound = g_key_file_get_string (gkf, "sounds", "ack_sound", NULL);
+			priv->error_sound = g_key_file_get_string (gkf, "sounds", "error_sound", NULL);
 		}
 		if (g_key_file_has_group (gkf, "printer"))
 		{
@@ -1180,6 +1196,23 @@ static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 	return FALSE;
 }
 
+void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
+{
+	gchar *soundfile = NULL;
+	switch (sound) {
+		case ACK_SOUND:
+			soundfile = priv->ack_sound;
+			break;
+		case ERROR_SOUND:
+			soundfile = priv->error_sound;
+			break;
+		default:
+			break;
+	}
+	if (soundfile)
+		ca_context_play (ca_gtk_context_get(), 0, CA_PROP_MEDIA_FILENAME, soundfile, NULL);
+}
+
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
@@ -1206,25 +1239,30 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		case PB_STATE_PREVIEW_COOLDOWN:
 		{
 			GST_DEBUG_OBJECT (pb, "BUSY... ignore event!");
+			_play_event_sound (priv, ERROR_SOUND);
 			break;
 		}
 		case PB_STATE_ASK_PRINT:
 		case PB_STATE_ASK_UPLOAD:
 		{
 // 			photo_booth_button_cancel_clicked (pb);
+			_play_event_sound (priv, ERROR_SOUND);
 			break;
 		}
 		case PB_STATE_SCREENSAVER:
 		{
 			photo_booth_screensaver_stop (pb);
+			_play_event_sound (priv, ACK_SOUND);
 			break;
 		}
 		case PB_STATE_NONE:
 		{
 			photo_booth_screensaver (pb);
+			_play_event_sound (priv, ACK_SOUND);
 			break;
 		}
 		default:
+			_play_event_sound (priv, ERROR_SOUND);
 			break;
 	}
 
@@ -1694,6 +1732,7 @@ void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
 	GST_DEBUG_OBJECT (pb, "photo_booth_button_print_clicked");
 	if (priv->state == PB_STATE_ASK_PRINT)
 	{
+		_play_event_sound (priv, ACK_SOUND);
 		photo_booth_print (pb);
 	}
 }
@@ -1706,6 +1745,7 @@ void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win
 	GST_DEBUG_OBJECT (pb, "photo_booth_button_upload_clicked");
 	if (priv->state == PB_STATE_ASK_UPLOAD)
 	{
+		_play_event_sound (priv, ACK_SOUND);
 		photo_booth_window_set_spinner (priv->win, TRUE);
 		gtk_label_set_text (priv->win->status, _("Uploading..."));
 		priv->upload_thread = g_thread_try_new ("upload", (GThreadFunc) photo_booth_facebook_post_thread_func, pb, NULL);
@@ -1717,6 +1757,7 @@ void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	GST_DEBUG_OBJECT (button, "photo_booth_button_cancel_clicked");
+	_play_event_sound (photo_booth_get_instance_private (pb), ACK_SOUND);
 	photo_booth_cancel (pb);
 }
 
@@ -1849,7 +1890,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 		GST_ERROR_OBJECT (context, "can't draw because we have no photo buffer!");
 		return;
 	}
-	GST_INFO_OBJECT (context, "draw_page no. %i . %" GST_PTR_FORMAT " size %dx%x, %i dpi, offsets (%.2f, %.2f)", page_nr, priv->print_buffer, priv->print_width, priv->print_height, priv->print_dpi, priv->print_x_offset, priv->print_y_offset);
+	GST_DEBUG_OBJECT (context, "draw_page no. %i . %" GST_PTR_FORMAT " size %dx%x, %i dpi, offsets (%.2f, %.2f)", page_nr, priv->print_buffer, priv->print_width, priv->print_height, priv->print_dpi, priv->print_x_offset, priv->print_y_offset);
 
 	gst_buffer_map(priv->print_buffer, &map, GST_MAP_READ);
 	guint8 *h = map.data;
@@ -1896,7 +1937,6 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 	{
 		gtk_print_operation_get_error (operation, &print_error);
 		photo_booth_printing_error_dialog (priv->win, print_error);
-		GST_ERROR_OBJECT (user_data, "print_done photos_printed GTK_PRINT_OPERATION_RESULT_ERROR: %s", print_error->message);
 		g_error_free (print_error);
 	}
 	else if (result == GTK_PRINT_OPERATION_RESULT_APPLY)
