@@ -45,7 +45,7 @@ static void photo_booth_led_init (PhotoBoothLed *led)
 	for (int i=0; i < 10; i++)
 	{
 		gchar *devicename = g_strdup_printf ("%s%d", LED_DEVICENAME, i);
-		GST_INFO_OBJECT (led, "trying to open device %s... ", devicename);
+		GST_DEBUG_OBJECT (led, "trying to open device %s... ", devicename);
 		gboolean exists = g_file_test ((const char*) devicename, G_FILE_TEST_EXISTS);
 		if (exists)
 		{
@@ -82,10 +82,10 @@ static void photo_booth_led_init (PhotoBoothLed *led)
 			tcsetattr(led->fd, TCSAFLUSH, &tty);
 			char tempbuf[32];
 			int n = read (led->fd, tempbuf, sizeof(tempbuf)-1);
-			GST_WARNING_OBJECT(led, "read %i bytes: '%s'", n, tempbuf);
+			GST_DEBUG_OBJECT(led, "read %i bytes: '%s'", n, tempbuf);
 			if (g_ascii_strncasecmp ("Photobooth-LED ready", tempbuf, 20) == 0)
 			{
-				GST_WARNING_OBJECT (led, "initialized!");
+				GST_DEBUG_OBJECT (led, "initialized!");
 				photo_booth_led_black (led);
 			}
 			else
@@ -115,7 +115,7 @@ void photo_booth_led_black (PhotoBoothLed *led)
 	if (led->fd > 0)
 	{
 		char cmd = LED_BLACK;
-		GST_INFO_OBJECT(led, "turning off leds");
+		GST_DEBUG_OBJECT(led, "turning off leds");
 		write (led->fd, &cmd, 1);
 	}
 }
@@ -125,7 +125,7 @@ void photo_booth_led_countdown (PhotoBoothLed *led, gint seconds)
 	if (led->fd > 0)
 	{
 		char cmd = LED_COUNTDOWN;
-		GST_INFO_OBJECT(led, "countdown %i seconds", seconds);
+		GST_DEBUG_OBJECT(led, "countdown %i seconds", seconds);
 		write (led->fd, &cmd, 1);
 	}
 }
@@ -135,8 +135,19 @@ void photo_booth_led_flash (PhotoBoothLed *led)
 	if (led->fd > 0)
 	{
 		char cmd = LED_FLASH;
-		GST_INFO_OBJECT(led, "flashing leds");
+		GST_DEBUG_OBJECT(led, "flashing leds");
 		write (led->fd, &cmd, 1);
+	}
+}
+
+void photo_booth_led_printer (PhotoBoothLed *led, gint copies)
+{
+	if (led->fd > 0)
+	{
+		char *cmd = g_strdup_printf ("%c%d", LED_PRINT, copies);
+		GST_DEBUG_OBJECT(led, "turning on printer leds '%s'", cmd);
+		write (led->fd, &cmd, strlen(cmd));
+		g_free (cmd);
 	}
 }
 

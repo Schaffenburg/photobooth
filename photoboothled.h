@@ -22,6 +22,7 @@
 #define LED_BLACK       'b'
 #define LED_COUNTDOWN   'c'
 #define LED_FLASH       'f'
+#define LED_PRINT       'p'
 #define LED_DEVICENAME  "/dev/ttyACM"
 
 G_BEGIN_DECLS
@@ -51,6 +52,7 @@ PhotoBoothLed  *photo_booth_led_new             (void);
 void            photo_booth_led_black           (PhotoBoothLed *led);
 void            photo_booth_led_countdown       (PhotoBoothLed *led, gint seconds);
 void            photo_booth_led_flash           (PhotoBoothLed *led);
+void            photo_booth_led_printer         (PhotoBoothLed *led, gint copies);
 
 G_END_DECLS
 

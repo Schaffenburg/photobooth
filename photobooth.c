@@ -1891,16 +1891,24 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 	pb = PHOTO_BOOTH (user_data);
 	priv = photo_booth_get_instance_private (pb);
 
-	priv->photos_printed++;
-	GST_INFO_OBJECT (user_data, "print_done photos_printed=%i", priv->photos_printed);
-
 	GError *print_error;
 	if (result == GTK_PRINT_OPERATION_RESULT_ERROR)
 	{
 		gtk_print_operation_get_error (operation, &print_error);
 		photo_booth_printing_error_dialog (priv->win, print_error);
+		GST_ERROR_OBJECT (user_data, "print_done photos_printed GTK_PRINT_OPERATION_RESULT_ERROR: %s", print_error->message);
 		g_error_free (print_error);
 	}
+	else if (result == GTK_PRINT_OPERATION_RESULT_APPLY)
+	{
+		gint copies = gtk_print_settings_get_n_copies (priv->printer_settings);
+		priv->photos_printed += copies;
+		GST_INFO_OBJECT (user_data, "print_done photos_printed copies=%i total=%i", copies, priv->photos_printed);
+		photo_booth_led_printer (priv->led, copies);
+	}
+	else
+		GST_INFO_OBJECT (user_data, "print_done photos_printed unhandled result %i", result);
+
 	g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
 
 	if (priv->facebook_put_uri)
