@@ -114,8 +114,10 @@ void photo_booth_led_black (PhotoBoothLed *led)
 {
 	if (led->fd > 0)
 	{
-		char cmd = LED_BLACK;
 		GST_DEBUG_OBJECT(led, "turning off leds");
+		char cmd = LED_RING_BLACK;
+		write (led->fd, &cmd, 1);
+		cmd = LED_STRIP_BLACK;
 		write (led->fd, &cmd, 1);
 	}
 }
@@ -144,10 +146,16 @@ void photo_booth_led_printer (PhotoBoothLed *led, gint copies)
 {
 	if (led->fd > 0)
 	{
-		char *cmd = g_strdup_printf ("%c%d", LED_PRINT, copies);
+/*		char *cmd = g_strdup_printf ("%c%d", LED_PRINT, copies);
 		GST_DEBUG_OBJECT(led, "turning on printer leds '%s'", cmd);
 		write (led->fd, &cmd, strlen(cmd));
 		g_free (cmd);
+* arduino doesn't process this correctly */
+		char cmd = LED_PRINT;
+                write (led->fd, &cmd, 1);
+		cmd = copies+0x30; //!HACK won't work for >9 copies
+		write (led->fd, &cmd, 1);
+                GST_DEBUG_OBJECT(led, "printing %c%i", cmd, copies);
 	}
 }
 

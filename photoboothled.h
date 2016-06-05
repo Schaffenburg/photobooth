@@ -19,7 +19,8 @@
 #include <glib-object.h>
 #include <glib.h>
 
-#define LED_BLACK       'b'
+#define LED_RING_BLACK  'b'
+#define LED_STRIP_BLACK 'B'
 #define LED_COUNTDOWN   'c'
 #define LED_FLASH       'f'
 #define LED_PRINT       'p'

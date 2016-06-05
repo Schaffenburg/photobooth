@@ -27,6 +27,7 @@
 #include <gst/video/gstvideosink.h>
 #include <gst/app/app.h>
 #include <curl/curl.h>
+#include <X11/Xlib.h>
 // #ifdef HAVE_LIBCANBERRA
 #include <canberra-gtk.h>
 // #endif
@@ -542,6 +543,23 @@ static GstPadProbeReturn _gst_video_probecb (GstPad * pad, GstPadProbeInfo * inf
 	return GST_PAD_PROBE_DROP;
 }
 
+void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
+{
+	gchar *soundfile = NULL;
+	switch (sound) {
+		case ACK_SOUND:
+			soundfile = priv->ack_sound;
+			break;
+		case ERROR_SOUND:
+			soundfile = priv->error_sound;
+			break;
+		default:
+			break;
+	}
+	if (soundfile)
+		ca_context_play (ca_gtk_context_get(), 0, CA_PROP_MEDIA_FILENAME, soundfile, NULL);
+}
+
 static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 {
 	int retval;
@@ -640,7 +658,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 			{
 				GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
 				if (state == CAPTURE_FAILED)
+				{
+					photo_booth_focus (pb->cam_info);
 					photo_booth_window_set_spinner (priv->win, FALSE);
+				}
 				state = CAPTURE_VIDEO;
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
 			}
@@ -714,14 +735,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				if (ret && pb->cam_info->size)
 				{
 					g_main_context_invoke (NULL, (GSourceFunc) photo_booth_snapshot_taken, pb);
-					if (priv->cam_reeinit_after_snapshot)
-					{
-						photo_booth_cam_close (&pb->cam_info);
-						photo_booth_cam_init (&pb->cam_info);
-					}
+					state = CAPTURE_PAUSED;
 				}
 				else {
 					gtk_label_set_text (priv->win->status, _("Taking photo failed!"));
+					_play_event_sound (priv, ERROR_SOUND);
 					GST_ERROR_OBJECT (pb, "Taking photo failed!");
 					photo_booth_cam_close (&pb->cam_info);
 					photo_booth_change_state (pb, PB_STATE_NONE);
@@ -1196,23 +1214,6 @@ static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 	return FALSE;
 }
 
-void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
-{
-	gchar *soundfile = NULL;
-	switch (sound) {
-		case ACK_SOUND:
-			soundfile = priv->ack_sound;
-			break;
-		case ERROR_SOUND:
-			soundfile = priv->error_sound;
-			break;
-		default:
-			break;
-	}
-	if (soundfile)
-		ca_context_play (ca_gtk_context_get(), 0, CA_PROP_MEDIA_FILENAME, soundfile, NULL);
-}
-
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
@@ -1389,7 +1390,6 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstPad *pad;
-	gboolean ret;
 
 	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_trigger");
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_snapshot_trigger");
@@ -1400,23 +1400,7 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
 
 	SEND_COMMAND (pb, CONTROL_PHOTO);
 
-	gst_element_set_state (pb->video_bin, GST_STATE_READY);
-	GST_DEBUG_OBJECT (pb, "preparing for snapshot! halt video_bin...");
-	pad = gst_element_get_static_pad (pb->video_bin, "src");
-	priv->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
-	gst_object_unref (pad);
-	gst_element_unlink (pb->video_bin, pb->video_sink);
-
-	if (priv->photo_block_id)
-	{
-		GST_DEBUG_OBJECT (pb, "preparing for snapshot! unblock photo_bin...");
-		pad = gst_element_get_static_pad (pb->photo_bin, "src");
-		gst_pad_remove_probe (pad, priv->photo_block_id);
-		gst_object_unref (pad);
-	}
-
-	ret = gst_element_link (pb->photo_bin, pb->video_sink);
-	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
+	GST_DEBUG_OBJECT (pb, "preparing for snapshot...");
 
 	return FALSE;
 }
@@ -1509,6 +1493,24 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	GstBuffer *buffer;
 	GstFlowReturn flowret;
 	GstPad *pad;
+	gboolean ret;
+
+	gst_element_set_state (pb->video_bin, GST_STATE_READY);
+	pad = gst_element_get_static_pad (pb->video_bin, "src");
+	priv->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
+	gst_object_unref (pad);
+	gst_element_unlink (pb->video_bin, pb->video_sink);
+
+	if (priv->photo_block_id)
+	{
+		GST_DEBUG_OBJECT (pb, "preparing for snapshot! unblock photo_bin...");
+		pad = gst_element_get_static_pad (pb->photo_bin, "src");
+		gst_pad_remove_probe (pad, priv->photo_block_id);
+		gst_object_unref (pad);
+	}
+
+	ret = gst_element_link (pb->photo_bin, pb->video_sink);
+	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 
 	priv->photos_taken++;
 	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_taken size=%lu photos_taken=%i", pb->cam_info->size, priv->photos_taken);
@@ -1521,8 +1523,6 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	if (flowret != GST_FLOW_OK)
 		GST_ERROR_OBJECT (appsrc, "couldn't push %" GST_PTR_FORMAT " to appsrc", buffer);
 	gst_object_unref (appsrc);
-
-	SEND_COMMAND (pb, CONTROL_PAUSE);
 
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 	pad = gst_element_get_static_pad (pb->photo_bin, "src");
@@ -1543,6 +1543,11 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 	switch (priv->state) {
 		case PB_STATE_TAKING_PHOTO:
 		{
+			if (priv->cam_reeinit_after_snapshot)
+			{
+				photo_booth_cam_close (&pb->cam_info);
+				photo_booth_cam_init (&pb->cam_info);
+			}
 			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
 			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
 			gtk_widget_show (GTK_WIDGET (priv->win->button_print));
@@ -1854,12 +1859,13 @@ static void photo_booth_print (PhotoBooth *pb)
 		else if (res == GTK_PRINT_OPERATION_RESULT_CANCEL)
 		{
 			gtk_label_set_text (priv->win->status, _("Printing cancelled"));
+			g_object_unref (priv->printer_settings);
+			priv->printer_settings = NULL;
 			GST_INFO_OBJECT (pb, "print cancelled");
 		}
 		else if (res == GTK_PRINT_OPERATION_RESULT_APPLY)
 		{
-			if (priv->printer_settings != NULL)
-				g_object_unref (priv->printer_settings);
+			g_object_unref (priv->printer_settings);
 			priv->printer_settings = g_object_ref (gtk_print_operation_get_print_settings (printop));
 		}
 		g_object_unref (printop);
@@ -2052,6 +2058,7 @@ int main (int argc, char *argv[])
 	PhotoBooth *pb;
 	int ret;
 
+	XInitThreads();
 	gst_init (0, NULL);
 
 	pb = photo_booth_new ();
