@@ -50,6 +50,7 @@ struct _PhotoBoothPrivate
 
 	GThread           *capture_thread;
 	gulong             video_block_id, photo_block_id, sink_block_id;
+	gint               state_change_watchdog_timeout_id;
 
 	guint32            countdown;
 	gchar             *overlay_image;
@@ -139,6 +140,7 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb);
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
 static gboolean photo_booth_screensaver (PhotoBooth *pb);
 static gboolean photo_booth_screensaver_stop (PhotoBooth *pb);
+static gboolean photo_booth_watchdog_timedout (PhotoBooth *pb);
 
 /* libgphoto2 */
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
@@ -258,6 +260,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->facebook_put_timeout = 0;
 	priv->facebook_put_uri = NULL;
 	priv->upload_thread = NULL;
+	priv->state_change_watchdog_timeout_id = 0;
 
 	priv->led = photo_booth_led_new ();
 
@@ -278,6 +281,12 @@ static void photo_booth_change_state (PhotoBooth *pb, PhotoboothState newstate)
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, dot_filename);
 	g_free (dot_filename);
 	priv->state = newstate;
+	if (priv->state_change_watchdog_timeout_id)
+	{
+		GST_LOG_OBJECT (pb, "removed watchdog timeout");
+		g_source_remove (priv->state_change_watchdog_timeout_id);
+		priv->state_change_watchdog_timeout_id = 0;
+	}
 }
 
 static void photo_booth_setup_window (PhotoBooth *pb)
@@ -659,9 +668,9 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
 				if (state == CAPTURE_FAILED)
 				{
-					photo_booth_focus (pb->cam_info);
 					photo_booth_window_set_spinner (priv->win, FALSE);
 				}
+				photo_booth_focus (pb->cam_info);
 				state = CAPTURE_VIDEO;
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
 			}
@@ -776,6 +785,13 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					GST_DEBUG_OBJECT (pb, "CONTROL_QUIT!");
 					state = CAPTURE_QUIT;
 					break;
+				case CONTROL_REINIT:
+				{
+					GST_DEBUG_OBJECT (pb, "CONTROL_REINIT!");
+					photo_booth_cam_close (&pb->cam_info);
+					photo_booth_cam_init (&pb->cam_info);
+					break;
+				}
 				default:
 					GST_ERROR_OBJECT (pb, "illegal control socket command %c received!", command);
 			}
@@ -1234,16 +1250,21 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 			break;
 		}
 		case PB_STATE_COUNTDOWN:
+		case PB_STATE_PREVIEW_COOLDOWN:
+			GST_DEBUG_OBJECT (pb, "BUSY... ignore");
+			break;
 		case PB_STATE_TAKING_PHOTO:
 		case PB_STATE_PROCESS_PHOTO:
 		case PB_STATE_PRINTING:
-		case PB_STATE_PREVIEW_COOLDOWN:
 		{
-			GST_DEBUG_OBJECT (pb, "BUSY... ignore event!");
+			GST_DEBUG_OBJECT (pb, "BUSY... install watchdog timeout");
+			if (!priv->state_change_watchdog_timeout_id)
+				priv->state_change_watchdog_timeout_id = g_timeout_add_seconds (5, (GSourceFunc) photo_booth_watchdog_timedout, pb);
 			_play_event_sound (priv, ERROR_SOUND);
 			break;
 		}
 		case PB_STATE_ASK_PRINT:
+			g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
 		case PB_STATE_ASK_UPLOAD:
 		{
 // 			photo_booth_button_cancel_clicked (pb);
@@ -1503,7 +1524,7 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 
 	if (priv->photo_block_id)
 	{
-		GST_DEBUG_OBJECT (pb, "preparing for snapshot! unblock photo_bin...");
+		GST_DEBUG_OBJECT (pb, "unblock photo_bin...");
 		pad = gst_element_get_static_pad (pb->photo_bin, "src");
 		gst_pad_remove_probe (pad, priv->photo_block_id);
 		gst_object_unref (pad);
@@ -1544,10 +1565,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		case PB_STATE_TAKING_PHOTO:
 		{
 			if (priv->cam_reeinit_after_snapshot)
-			{
-				photo_booth_cam_close (&pb->cam_info);
-				photo_booth_cam_init (&pb->cam_info);
-			}
+				SEND_COMMAND (pb, CONTROL_REINIT);
 			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
 			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
 			gtk_widget_show (GTK_WIDGET (priv->win->button_print));
@@ -1771,6 +1789,11 @@ void photo_booth_cancel (PhotoBooth *pb)
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
 	switch (priv->state) {
+		case PB_STATE_PROCESS_PHOTO:
+			photo_booth_process_photo_remove_elements (pb);
+		case PB_STATE_TAKING_PHOTO:
+		case PB_STATE_PRINTING:
+			break;
 		case PB_STATE_ASK_PRINT:
 		{
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
@@ -2022,6 +2045,15 @@ void photo_booth_facebook_post_thread_func (PhotoBooth* pb)
 static gboolean photo_booth_upload_timedout (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	GST_DEBUG_OBJECT (pb, "ask upload timed out");
+	photo_booth_cancel (pb);
+	return FALSE;
+}
+
+static gboolean photo_booth_watchdog_timedout (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	GST_ERROR_OBJECT (pb, "watchdog timed out in state %s", photo_booth_state_get_name(priv->state));
 	photo_booth_cancel (pb);
 	return FALSE;
 }

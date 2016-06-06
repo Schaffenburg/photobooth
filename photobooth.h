@@ -28,6 +28,7 @@
 #define CONTROL_PHOTO          '3'     /* photo capture */
 #define CONTROL_PAUSE          '4'     /* pause capture */
 #define CONTROL_UNPAUSE        '5'     /* unpause capture */
+#define CONTROL_REINIT         '6'     /* reinitializes camera */
 #define CONTROL_QUIT           '0'     /* quit capture thread */
 #define CONTROL_SOCKETS(src)   src->control_sock
 #define WRITE_SOCKET(src)      src->control_sock[1]
