@@ -1115,6 +1115,10 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 		gst_pad_remove_probe (pad, priv->sink_block_id);
 		gst_object_unref (pad);
 		gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
+		GtkWidget *gtkgstwidget;
+		g_object_get (pb->video_sink, "widget", &gtkgstwidget, NULL);
+		photo_booth_window_add_gtkgstwidget (priv->win, gtkgstwidget);
+		g_object_unref (gtkgstwidget);
 	}
 	int ret = gst_element_link (pb->video_bin, pb->video_sink);
 	GST_LOG_OBJECT (pb, "linked video-bin ! video-sink ret=%i", ret);
@@ -1153,6 +1157,8 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 
 static gboolean photo_booth_screensaver (PhotoBooth *pb)
 {
+	GtkWidget *gtkgstwidget;
+	GstElement *gtkglsink, *video_sink;
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	photo_booth_change_state (pb, PB_STATE_SCREENSAVER);
 
@@ -1190,9 +1196,24 @@ static gboolean photo_booth_screensaver (PhotoBooth *pb)
 	SEND_COMMAND (pb, CONTROL_PAUSE);
 
 	priv->screensaver_playbin = gst_element_factory_make ("playbin", "screensaver-playbin");
+
+	video_sink = gst_element_factory_make ("glsinkbin", "video-sink");
+	gtkglsink = gst_element_factory_make ("gtkglsink", "gtkglsink");
+
+	if (!(video_sink && gtkglsink))
+	{
+		GST_ERROR_OBJECT (pb, "Failed to create video sink element(s)");
+		return FALSE;
+	}
+
+	g_object_set (video_sink, "sink", gtkglsink, NULL);
+	g_object_get (gtkglsink, "widget", &gtkgstwidget, NULL);
+	photo_booth_window_add_gtkgstwidget (priv->win, gtkgstwidget);
+	g_object_unref (gtkgstwidget);
+
 	gst_object_ref (pb->video_sink);
 	gst_bin_remove (GST_BIN (pb->pipeline), pb->video_sink);
-	g_object_set (priv->screensaver_playbin, "video-sink", pb->video_sink, NULL);
+	g_object_set (priv->screensaver_playbin, "video-sink", video_sink, NULL);
 
 	if (priv->screensaver_uri)
 		g_object_set (priv->screensaver_playbin, "uri", priv->screensaver_uri, NULL);
@@ -1221,6 +1242,10 @@ static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 
 	gst_element_set_state (priv->screensaver_playbin, GST_STATE_NULL);
 	gst_element_set_state (pb->pipeline, GST_STATE_READY);
+
+	GstElement *video_sink;
+	g_object_get (priv->screensaver_playbin, "video-sink", &video_sink, NULL);
+	g_object_unref (video_sink);
 
 	gst_bin_add (GST_BIN (pb->pipeline), pb->video_sink);
 	gst_object_unref (pb->video_sink);
