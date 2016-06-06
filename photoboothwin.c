@@ -100,10 +100,6 @@ void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkg
 {
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
-	if (win->gtkgstwidget)
-	{
-		gtk_container_remove (GTK_CONTAINER (priv->overlay), win->gtkgstwidget);
-	}
 	gtk_container_add (GTK_CONTAINER (priv->overlay), gtkgstwidget);
 	gtk_widget_add_events (gtkgstwidget, GDK_BUTTON_PRESS_MASK);
 	gtk_widget_realize (gtkgstwidget);
