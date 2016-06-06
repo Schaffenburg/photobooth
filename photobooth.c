@@ -1106,6 +1106,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 		pad = gst_element_get_static_pad (pb->video_bin, "src");
 		GST_DEBUG_OBJECT (pad, "photo_booth_preview! unblock video_bin pad@%p...", pad);
 		gst_pad_remove_probe (pad, priv->video_block_id);
+		priv->video_block_id = 0;
 		gst_object_unref (pad);
 	}
 	if (priv->sink_block_id)
@@ -1113,6 +1114,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 		pad = gst_element_get_static_pad (pb->video_sink, "sink");
 		GST_DEBUG_OBJECT (pad, "photo_booth_preview! unblock video_sink pad@%p...", pad);
 		gst_pad_remove_probe (pad, priv->sink_block_id);
+		priv->sink_block_id = 0;
 		gst_object_unref (pad);
 		gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
 	}
@@ -1141,7 +1143,16 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 		GST_DEBUG_OBJECT (pb, "still uploading, wait another bit");
 		return TRUE;
 	}
-
+	if (!pb->cam_info)
+	{
+		GST_DEBUG_OBJECT (pb, "camera not ready, waiting");
+		return TRUE;
+	}
+	if (priv->state != PB_STATE_PREVIEW_COOLDOWN)
+	{
+		GST_DEBUG_OBJECT (pb, "wrong state");
+		return FALSE;
+	}
 	photo_booth_change_state (pb, PB_STATE_PREVIEW);
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	photo_booth_window_hide_cursor (priv->win);
@@ -1183,6 +1194,7 @@ static gboolean photo_booth_screensaver (PhotoBooth *pb)
 		pad = gst_element_get_static_pad (pb->video_sink, "sink");
 		GST_DEBUG_OBJECT (pad, "showing screensaver! unblock video_sink...");
 		gst_pad_remove_probe (pad, priv->sink_block_id);
+		priv->sink_block_id = 0;
 		gst_object_unref (pad);
 		gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
 	}
@@ -1806,6 +1818,7 @@ void photo_booth_cancel (PhotoBooth *pb)
 		default: return;
 	}
 	gtk_widget_hide (GTK_WIDGET (priv->win->button_cancel));
+	photo_booth_change_state (pb, PB_STATE_NONE);
 	SEND_COMMAND (pb, CONTROL_UNPAUSE);
 }
 
