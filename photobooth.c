@@ -161,6 +161,7 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb);
 static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data);
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb);
 static void photo_booth_free_print_buffer (PhotoBooth *pb);
+static GstPadProbeReturn photo_booth_screensaver_plug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
@@ -670,7 +671,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				{
 					photo_booth_window_set_spinner (priv->win, FALSE);
 				}
-				photo_booth_focus (pb->cam_info);
+				//photo_booth_focus (pb->cam_info);
 				state = CAPTURE_VIDEO;
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
 			}
@@ -1162,44 +1163,26 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	return FALSE;
 }
 
-static gboolean photo_booth_screensaver (PhotoBooth *pb)
+static GstPadProbeReturn photo_booth_screensaver_plug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
 {
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	photo_booth_change_state (pb, PB_STATE_SCREENSAVER);
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
 
-	priv->screensaver_timeout_id = 0;
+	g_mutex_lock (&priv->processing_mutex);
+	gst_element_unlink (pb->video_bin, pb->video_sink);
+	GST_DEBUG_OBJECT (pad, "continue plugging screensaver pipeline %" GST_PTR_FORMAT "", pad);
 
-	GstPad *pad;
-	if (!priv->photo_block_id)
-	{
-		gst_element_set_state (pb->photo_bin, GST_STATE_READY);
-		pad = gst_element_get_static_pad (pb->photo_bin, "src");
-		GST_DEBUG_OBJECT (pad, "showing screensaver! halt photo_bin...");
-		priv->photo_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_photo_probecb, pb, NULL);
-		gst_object_unref (pad);
-		gst_element_unlink (pb->photo_bin, pb->video_sink);
-	}
-	if (!priv->video_block_id)
-	{
-		pad = gst_element_get_static_pad (pb->video_bin, "src");
-		gst_element_set_state (pb->video_bin, GST_STATE_READY);
-		GST_DEBUG_OBJECT (pad, "showing screensaver! halt video_bin...");
-		priv->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
-		GST_DEBUG_OBJECT (pad, "pad@%p id = %i", pad, priv->video_block_id);
-		gst_object_unref (pad);
-		gst_element_unlink (pb->video_bin, pb->video_sink);
-	}
 	if (priv->sink_block_id)
 	{
-		pad = gst_element_get_static_pad (pb->video_sink, "sink");
-		GST_DEBUG_OBJECT (pad, "showing screensaver! unblock video_sink...");
-		gst_pad_remove_probe (pad, priv->sink_block_id);
+		GstPad *sinkpad;
+		sinkpad = gst_element_get_static_pad (pb->video_sink, "sink");
+		GST_DEBUG_OBJECT (sinkpad, "showing screensaver! unblock video_sink...");
+		gst_pad_remove_probe (sinkpad, priv->sink_block_id);
 		priv->sink_block_id = 0;
-		gst_object_unref (pad);
+		gst_object_unref (sinkpad);
 		gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
 	}
-
-	SEND_COMMAND (pb, CONTROL_PAUSE);
 
 	priv->screensaver_playbin = gst_element_factory_make ("playbin", "screensaver-playbin");
 	gst_object_ref (pb->video_sink);
@@ -1216,6 +1199,35 @@ static gboolean photo_booth_screensaver (PhotoBooth *pb)
 	gst_object_unref (GST_OBJECT (bus));
 
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
+
+	g_mutex_unlock (&priv->processing_mutex);
+	return GST_PAD_PROBE_REMOVE;
+}
+
+static gboolean photo_booth_screensaver (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	if (priv->state != PB_STATE_PREVIEW && priv->state != PB_STATE_NONE)
+	{
+		GST_DEBUG_OBJECT (pb, "wrong state %s", photo_booth_state_get_name (priv->state));
+		return FALSE;
+	}
+	priv->screensaver_timeout_id = 0;
+
+	photo_booth_change_state (pb, PB_STATE_SCREENSAVER);
+	SEND_COMMAND (pb, CONTROL_PAUSE);
+
+	GstPad *pad;
+	if (!priv->video_block_id)
+	{
+		pad = gst_element_get_static_pad (pb->video_bin, "src");
+		gst_element_set_state (pb->video_bin, GST_STATE_READY);
+		GST_DEBUG_OBJECT (pad, "showing screensaver! halt video_bin...");
+		priv->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_IDLE, photo_booth_screensaver_plug_continue, pb, NULL);
+		GST_DEBUG_OBJECT (pad, "pad@%p id = %i", pad, priv->video_block_id);
+		gst_object_unref (pad);
+	}
+
 	return FALSE;
 }
 
@@ -1236,6 +1248,7 @@ static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 
 	gst_bin_add (GST_BIN (pb->pipeline), pb->video_sink);
 	gst_object_unref (pb->video_sink);
+	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_screensaver_stop");
 
 	SEND_COMMAND (pb, CONTROL_UNPAUSE);
 
@@ -1818,7 +1831,7 @@ void photo_booth_cancel (PhotoBooth *pb)
 		default: return;
 	}
 	gtk_widget_hide (GTK_WIDGET (priv->win->button_cancel));
-	photo_booth_change_state (pb, PB_STATE_NONE);
+// 	photo_booth_change_state (pb, PB_STATE_NONE);
 	SEND_COMMAND (pb, CONTROL_UNPAUSE);
 }
 
