@@ -77,6 +77,7 @@ struct _PhotoBoothPrivate
 	GstElement        *audio_playbin;
 
 	GstElement        *screensaver_playbin;
+	gboolean          paused_callback_id;
 
 	gchar             *countdown_audio_uri;
 	gchar             *error_sound;
@@ -141,6 +142,7 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb);
 static gboolean photo_booth_screensaver (PhotoBooth *pb);
 static gboolean photo_booth_screensaver_stop (PhotoBooth *pb);
 static gboolean photo_booth_watchdog_timedout (PhotoBooth *pb);
+static gboolean photo_booth_capture_paused_cb (PhotoBooth *pb);
 
 /* libgphoto2 */
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
@@ -162,6 +164,7 @@ static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpoin
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb);
 static void photo_booth_free_print_buffer (PhotoBooth *pb);
 static GstPadProbeReturn photo_booth_screensaver_plug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
+static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
@@ -254,6 +257,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->screensaver_uri = NULL;
 	priv->screensaver_timeout = DEFAULT_SCREENSAVER_TIMEOUT;
 	priv->screensaver_timeout_id = 0;
+	priv->paused_callback_id = 0;
 	priv->last_play_pos = GST_CLOCK_TIME_NONE;
 	priv->save_path_template = g_strdup (DEFAULT_SAVE_PATH_TEMPLATE);
 	priv->photos_taken = priv->photos_printed = 0;
@@ -808,6 +812,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 			}
 			else
 				GST_LOG_OBJECT (pb, "captured thread paused... timeout. %s", photo_booth_state_get_name (priv->state));
+			if (priv->paused_callback_id)
+			{
+				priv->paused_callback_id = 0;
+				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_capture_paused_cb, pb);
+			}
 		}
 	}
 
@@ -1163,15 +1172,73 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	return FALSE;
 }
 
-static GstPadProbeReturn photo_booth_screensaver_plug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+static gboolean photo_booth_screensaver (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	if (priv->state != PB_STATE_PREVIEW && priv->state != PB_STATE_NONE)
+	{
+		GST_DEBUG_OBJECT (pb, "wrong state %s", photo_booth_state_get_name (priv->state));
+		return FALSE;
+	}
+	photo_booth_change_state (pb, PB_STATE_SCREENSAVER);
+	SEND_COMMAND (pb, CONTROL_PAUSE);
+
+	priv->screensaver_timeout_id = 0;
+	priv->paused_callback_id = 1;
+
+	return FALSE;
+}
+
+static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	photo_booth_change_state (pb, PB_STATE_NONE);
+
+	GstElement *src = gst_bin_get_by_name (GST_BIN (pb->video_bin), "mjpeg-fdsrc");
+	GstPad *pad;
+	pad = gst_element_get_static_pad (src, "src");
+	gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_IDLE, photo_booth_screensaver_unplug_continue, pb, NULL);
+	gst_object_unref (pad);
+	gst_object_unref (src);
+	return FALSE;
+}
+
+static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
 
 	g_mutex_lock (&priv->processing_mutex);
+
+        GstPad *sinkpad;
+        sinkpad = gst_element_get_static_pad (pb->video_sink, "sink");
+        priv->sink_block_id = gst_pad_add_probe (sinkpad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
+
+	gst_element_query_position (priv->screensaver_playbin, GST_FORMAT_TIME, &priv->last_play_pos);
+	GST_DEBUG ("stop screensaver @ %" GST_TIME_FORMAT " %" GST_PTR_FORMAT " block_id=%lu", GST_TIME_ARGS (priv->last_play_pos), pad, priv->sink_block_id );
+
+	gst_element_set_state (priv->screensaver_playbin, GST_STATE_NULL);
+	gst_element_set_state (pb->pipeline, GST_STATE_READY);
+
+	gst_bin_add (GST_BIN (pb->pipeline), pb->video_sink);
+	gst_object_unref (pb->video_sink);
+	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_screensaver_stop");
+
+	SEND_COMMAND (pb, CONTROL_UNPAUSE);
+
+	g_mutex_unlock (&priv->processing_mutex);
+	return GST_PAD_PROBE_REMOVE;
+}
+
+static gboolean photo_booth_capture_paused_cb (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+
+	g_mutex_lock (&priv->processing_mutex);
 	gst_element_unlink (pb->video_bin, pb->video_sink);
-	GST_DEBUG_OBJECT (pad, "continue plugging screensaver pipeline %" GST_PTR_FORMAT "", pad);
+	GST_DEBUG_OBJECT (pb, "continue plugging screensaver pipeline");
 
 	if (priv->sink_block_id)
 	{
@@ -1201,57 +1268,6 @@ static GstPadProbeReturn photo_booth_screensaver_plug_continue (GstPad * pad, Gs
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 
 	g_mutex_unlock (&priv->processing_mutex);
-	return GST_PAD_PROBE_REMOVE;
-}
-
-static gboolean photo_booth_screensaver (PhotoBooth *pb)
-{
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	if (priv->state != PB_STATE_PREVIEW && priv->state != PB_STATE_NONE)
-	{
-		GST_DEBUG_OBJECT (pb, "wrong state %s", photo_booth_state_get_name (priv->state));
-		return FALSE;
-	}
-	priv->screensaver_timeout_id = 0;
-
-	photo_booth_change_state (pb, PB_STATE_SCREENSAVER);
-	SEND_COMMAND (pb, CONTROL_PAUSE);
-
-	GstPad *pad;
-	if (!priv->video_block_id)
-	{
-		pad = gst_element_get_static_pad (pb->video_bin, "src");
-		gst_element_set_state (pb->video_bin, GST_STATE_READY);
-		GST_DEBUG_OBJECT (pad, "showing screensaver! halt video_bin...");
-		priv->video_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_IDLE, photo_booth_screensaver_plug_continue, pb, NULL);
-		GST_DEBUG_OBJECT (pad, "pad@%p id = %i", pad, priv->video_block_id);
-		gst_object_unref (pad);
-	}
-
-	return FALSE;
-}
-
-static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
-{
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	photo_booth_change_state (pb, PB_STATE_NONE);
-
-	GstPad *pad;
-	pad = gst_element_get_static_pad (pb->video_sink, "sink");
-	priv->sink_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
-
-	gst_element_query_position (priv->screensaver_playbin, GST_FORMAT_TIME, &priv->last_play_pos);
-	GST_DEBUG ("stop screensaver @ %" GST_TIME_FORMAT "", GST_TIME_ARGS (priv->last_play_pos));
-
-	gst_element_set_state (priv->screensaver_playbin, GST_STATE_NULL);
-	gst_element_set_state (pb->pipeline, GST_STATE_READY);
-
-	gst_bin_add (GST_BIN (pb->pipeline), pb->video_sink);
-	gst_object_unref (pb->video_sink);
-	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_screensaver_stop");
-
-	SEND_COMMAND (pb, CONTROL_UNPAUSE);
-
 	return FALSE;
 }
 
@@ -2071,8 +2087,11 @@ void photo_booth_facebook_post_thread_func (PhotoBooth* pb)
 static gboolean photo_booth_upload_timedout (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	GST_DEBUG_OBJECT (pb, "ask upload timed out");
-	photo_booth_cancel (pb);
+	if (priv->state == PB_STATE_ASK_UPLOAD)
+	{
+		GST_DEBUG_OBJECT (pb, "ask upload timed out");
+		photo_booth_cancel (pb);
+	}
 	return FALSE;
 }
 
