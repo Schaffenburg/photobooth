@@ -1865,18 +1865,17 @@ void photo_booth_copies_value_changed (GtkRange *range, PhotoBoothWindow *win)
 static void photo_booth_print (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	gint num_copies = 0;
 	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_photo_print");
 	photo_booth_get_printer_status (pb);
 	GST_INFO_OBJECT (pb, "PRINT! prints_remaining=%i", priv->prints_remaining);
+	priv->print_copies = photo_booth_window_get_copies_hide (priv->win);
 	gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
-	num_copies = photo_booth_window_get_copies_hide (priv->win);
 
 #ifdef ALWAYS_PRINT_DIALOG
 	if (1)
 #else
-	if (priv->prints_remaining > num_copies)
+	if (priv->prints_remaining > priv->print_copies)
 #endif
 	{
 		gtk_label_set_text (priv->win->status, _("Printing..."));
@@ -1901,7 +1900,7 @@ static void photo_booth_print (PhotoBooth *pb)
 		}
 
 		gtk_print_operation_set_print_settings (printop, priv->printer_settings);
-		g_signal_connect (printop, "begin_print", G_CALLBACK (photo_booth_begin_print), NULL);
+		g_signal_connect (printop, "begin_print", G_CALLBACK (photo_booth_begin_print), pb);
 		g_signal_connect (printop, "draw_page", G_CALLBACK (photo_booth_draw_page), pb);
 		g_signal_connect (printop, "done", G_CALLBACK (photo_booth_print_done), pb);
 
@@ -1913,7 +1912,6 @@ static void photo_booth_print (PhotoBooth *pb)
 		gtk_print_operation_set_default_page_setup (printop, page_setup);
 		gtk_print_operation_set_use_full_page (printop, TRUE);
 		gtk_print_operation_set_unit (printop, GTK_UNIT_POINTS);
-		gtk_print_settings_set_n_copies (priv->printer_settings, num_copies);
 
 		res = gtk_print_operation_run (printop, action, GTK_WINDOW (priv->win), &print_error);
 		if (res == GTK_PRINT_OPERATION_RESULT_ERROR)
@@ -1944,7 +1942,15 @@ static void photo_booth_print (PhotoBooth *pb)
 
 static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintContext *context, gpointer user_data)
 {
-	gtk_print_operation_set_n_pages (operation, 1);
+	PhotoBooth *pb;
+	PhotoBoothPrivate *priv;
+
+	pb = PHOTO_BOOTH (user_data);
+
+	priv = photo_booth_get_instance_private (pb);
+
+	GST_INFO_OBJECT (pb, "photo_booth_begin_print %i copies", priv->print_copies);
+	gtk_print_operation_set_n_pages (operation, priv->print_copies);
 }
 
 static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data)
@@ -1961,7 +1967,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 		GST_ERROR_OBJECT (context, "can't draw because we have no photo buffer!");
 		return;
 	}
-	GST_DEBUG_OBJECT (context, "draw_page no. %i . %" GST_PTR_FORMAT " size %dx%x, %i dpi, offsets (%.2f, %.2f)", page_nr, priv->print_buffer, priv->print_width, priv->print_height, priv->print_dpi, priv->print_x_offset, priv->print_y_offset);
+	GST_DEBUG_OBJECT (context, "draw_page no. %i . %" GST_PTR_FORMAT " size %dx%d, %i dpi, offsets (%.2f, %.2f)", page_nr, priv->print_buffer, priv->print_width, priv->print_height, priv->print_dpi, priv->print_x_offset, priv->print_y_offset);
 
 	gst_buffer_map(priv->print_buffer, &map, GST_MAP_READ);
 	guint8 *h = map.data;
@@ -2012,7 +2018,7 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 	}
 	else if (result == GTK_PRINT_OPERATION_RESULT_APPLY)
 	{
-		gint copies = gtk_print_settings_get_n_copies (priv->printer_settings);
+		gint copies = gtk_print_operation_get_n_pages_to_print (operation);
 		priv->photos_printed += copies;
 		GST_INFO_OBJECT (user_data, "print_done photos_printed copies=%i total=%i", copies, priv->photos_printed);
 		photo_booth_led_printer (priv->led, copies);
