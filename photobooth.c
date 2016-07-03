@@ -2036,7 +2036,7 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 		photo_booth_change_state (pb, PB_STATE_ASK_UPLOAD);
 	}
 	else
-		photo_booth_preview (pb);
+		photo_booth_cancel (pb);
 
 	return;
 }
