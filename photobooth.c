@@ -88,8 +88,10 @@ struct _PhotoBoothPrivate
 	guint              screensaver_timeout_id;
 	GstClockTime       last_play_pos;
 
+	gint               upload_timeout;
 	gchar             *facebook_put_uri;
-	gint               facebook_put_timeout;
+	gchar             *imgur_album_id;
+	gchar             *imgur_access_token;
 	GThread           *upload_thread;
 	GMutex             upload_mutex;
 
@@ -108,6 +110,7 @@ struct _PhotoBoothPrivate
 #define PREVIEW_WIDTH 640
 #define PREVIEW_HEIGHT 424
 #define PT_PER_IN 72
+#define IMGUR_UPLOAD_URI "https://api.imgur.com/3/upload"
 
 typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 
@@ -177,7 +180,7 @@ static void photo_booth_printing_error_dialog (PhotoBoothWindow *window, GError 
 
 /* upload functions */
 void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win);
-static void photo_booth_facebook_post_thread_func (PhotoBooth *pb);
+static void photo_booth_post_thread_func (PhotoBooth *pb);
 static gboolean photo_booth_upload_timedout (PhotoBooth *pb);
 
 static void photo_booth_class_init (PhotoBoothClass *klass)
@@ -262,8 +265,10 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->save_path_template = g_strdup (DEFAULT_SAVE_PATH_TEMPLATE);
 	priv->photos_taken = priv->photos_printed = 0;
 	priv->save_filename_count = 0;
-	priv->facebook_put_timeout = 0;
+	priv->upload_timeout = 0;
 	priv->facebook_put_uri = NULL;
+	priv->imgur_album_id = NULL;
+	priv->imgur_access_token = NULL;
 	priv->upload_thread = NULL;
 	priv->state_change_watchdog_timeout_id = 0;
 
@@ -486,7 +491,10 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		if (g_key_file_has_group (gkf, "upload"))
 		{
 			priv->facebook_put_uri = g_key_file_get_string (gkf, "upload", "facebook_put_uri", NULL);
-			priv->facebook_put_timeout = g_key_file_get_integer (gkf, "upload", "facebook_put_timeout", NULL);
+			priv->imgur_album_id = g_key_file_get_string (gkf, "upload", "imgur_album_id", NULL);
+			priv->imgur_access_token = g_key_file_get_string (gkf, "upload", "imgur_access_token", NULL);
+			priv->upload_timeout = g_key_file_get_integer (gkf, "upload", "upload_timeout", NULL);
+			GST_INFO ( "facebook_put_uri='%s', priv->imgur_album_id='%s'", priv->facebook_put_uri, priv->imgur_album_id);
 		}
 	}
 
@@ -1812,7 +1820,7 @@ void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win
 		_play_event_sound (priv, ACK_SOUND);
 		photo_booth_window_set_spinner (priv->win, TRUE);
 		gtk_label_set_text (priv->win->status, _("Uploading..."));
-		priv->upload_thread = g_thread_try_new ("upload", (GThreadFunc) photo_booth_facebook_post_thread_func, pb, NULL);
+		priv->upload_thread = g_thread_try_new ("upload", (GThreadFunc) photo_booth_post_thread_func, pb, NULL);
 		photo_booth_cancel (pb);
 	}
 }
@@ -2028,11 +2036,11 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 
 	g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
 
-	if (priv->facebook_put_uri)
+	if ((priv->imgur_album_id && priv->imgur_access_token) || priv->facebook_put_uri)
 	{
 		gtk_widget_show (GTK_WIDGET (priv->win->button_upload));
 		gtk_label_set_text (priv->win->status, _("Upload photo?"));
-		g_timeout_add_seconds (priv->facebook_put_timeout, (GSourceFunc) photo_booth_upload_timedout, pb);
+		g_timeout_add_seconds (priv->upload_timeout, (GSourceFunc) photo_booth_upload_timedout, pb);
 		photo_booth_change_state (pb, PB_STATE_ASK_UPLOAD);
 	}
 	else
@@ -2049,7 +2057,7 @@ size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
 	return i;
 }
 
-void photo_booth_facebook_post_thread_func (PhotoBooth* pb)
+void photo_booth_post_thread_func (PhotoBooth* pb)
 {
 	PhotoBoothPrivate *priv;
 	CURLcode res;
@@ -2065,10 +2073,25 @@ void photo_booth_facebook_post_thread_func (PhotoBooth* pb)
 		struct curl_httppost* last = NULL;
 		GString *buf = g_string_new("");
 		gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
-		GST_INFO_OBJECT (pb, "photo_booth_facebook_post '%s' to '%s'...", filename, priv->facebook_put_uri);
 		curl_formadd (&post, &last, CURLFORM_COPYNAME, "image", CURLFORM_FILE, filename, CURLFORM_CONTENTTYPE, "image/jpeg", CURLFORM_END);
 		curl_easy_setopt (curl, CURLOPT_USERAGENT, "Schaffenburg Photobooth");
-		curl_easy_setopt (curl, CURLOPT_URL, priv->facebook_put_uri);
+		if (priv->imgur_access_token && priv->imgur_album_id)
+		{
+			gchar *auth_header;
+			struct curl_slist *headerlist = NULL;
+			auth_header = g_strdup_printf ("Authorization: Bearer %s", priv->imgur_access_token);
+			headerlist = curl_slist_append (headerlist, auth_header);
+			curl_formadd (&post, &last, CURLFORM_COPYNAME, "album", CURLFORM_COPYCONTENTS, priv->imgur_album_id,	CURLFORM_END);
+			curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headerlist);
+			curl_easy_setopt (curl, CURLOPT_URL, IMGUR_UPLOAD_URI);
+			GST_INFO_OBJECT (pb, "imgur posting '%s' to album http://imgur.com/a/%s'...", filename, priv->imgur_album_id);
+			g_free (auth_header);
+		}
+		else if (priv->facebook_put_uri)
+		{
+			curl_easy_setopt (curl, CURLOPT_URL, priv->facebook_put_uri);
+			GST_INFO_OBJECT (pb, "facebook posting '%s' to '%s'...", filename, priv->facebook_put_uri);
+		}
 		curl_easy_setopt (curl, CURLOPT_POST, 1L);
 		curl_easy_setopt (curl, CURLOPT_HTTPPOST, post);
 		curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, _curl_write_func);
