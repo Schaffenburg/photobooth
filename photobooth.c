@@ -92,6 +92,7 @@ struct _PhotoBoothPrivate
 	gchar             *facebook_put_uri;
 	gchar             *imgur_album_id;
 	gchar             *imgur_access_token;
+	gchar             *imgur_description;
 	GThread           *upload_thread;
 	GMutex             upload_mutex;
 
@@ -269,6 +270,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->facebook_put_uri = NULL;
 	priv->imgur_album_id = NULL;
 	priv->imgur_access_token = NULL;
+	priv->imgur_description = NULL;
 	priv->upload_thread = NULL;
 	priv->state_change_watchdog_timeout_id = 0;
 
@@ -493,8 +495,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			priv->facebook_put_uri = g_key_file_get_string (gkf, "upload", "facebook_put_uri", NULL);
 			priv->imgur_album_id = g_key_file_get_string (gkf, "upload", "imgur_album_id", NULL);
 			priv->imgur_access_token = g_key_file_get_string (gkf, "upload", "imgur_access_token", NULL);
+			priv->imgur_description = g_key_file_get_string (gkf, "upload", "imgur_description", NULL);
 			priv->upload_timeout = g_key_file_get_integer (gkf, "upload", "upload_timeout", NULL);
-			GST_INFO ( "facebook_put_uri='%s', priv->imgur_album_id='%s'", priv->facebook_put_uri, priv->imgur_album_id);
 		}
 	}
 
@@ -2079,7 +2081,9 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 			struct curl_slist *headerlist = NULL;
 			auth_header = g_strdup_printf ("Authorization: Bearer %s", priv->imgur_access_token);
 			headerlist = curl_slist_append (headerlist, auth_header);
-			curl_formadd (&post, &last, CURLFORM_COPYNAME, "album", CURLFORM_COPYCONTENTS, priv->imgur_album_id,	CURLFORM_END);
+			curl_formadd (&post, &last, CURLFORM_COPYNAME, "album", CURLFORM_COPYCONTENTS, priv->imgur_album_id, CURLFORM_END);
+			if (priv->imgur_description)
+				curl_formadd (&post, &last, CURLFORM_COPYNAME, "description", CURLFORM_COPYCONTENTS, priv->imgur_description, CURLFORM_END);
 			curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headerlist);
 			curl_easy_setopt (curl, CURLOPT_URL, IMGUR_UPLOAD_URI);
 			GST_INFO_OBJECT (pb, "imgur posting '%s' to album http://imgur.com/a/%s'...", filename, priv->imgur_album_id);
