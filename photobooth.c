@@ -1620,7 +1620,6 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			gtk_widget_show (GTK_WIDGET (priv->win->button_print));
 			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
-			gtk_label_set_text (priv->win->status, _("Print Photo?"));
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			break;
 		}
@@ -2039,7 +2038,6 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 	if ((priv->imgur_album_id && priv->imgur_access_token) || priv->facebook_put_uri)
 	{
 		gtk_widget_show (GTK_WIDGET (priv->win->button_upload));
-		gtk_label_set_text (priv->win->status, _("Upload photo?"));
 		g_timeout_add_seconds (priv->upload_timeout, (GSourceFunc) photo_booth_upload_timedout, pb);
 		photo_booth_change_state (pb, PB_STATE_ASK_UPLOAD);
 	}

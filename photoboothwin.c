@@ -93,6 +93,9 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 			g_object_unref (cssfile);
 		}
 	}
+	gtk_button_set_label (win->button_cancel, _("Cancel"));
+	gtk_button_set_label (win->button_print, _("Print photo"));
+	gtk_button_set_label (win->button_upload, _("Upload photo"));
 	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }
 
