@@ -361,6 +361,10 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->cam_icc_profile);
 	g_free (priv->overlay_image);
 	g_free (priv->save_path_template);
+	g_free (priv->facebook_put_uri);
+	g_free (priv->imgur_album_id);
+	g_free (priv->imgur_access_token);
+	g_free (priv->imgur_description);
 	g_hash_table_destroy (G_strings_table);
 	G_strings_table = NULL;
 	g_mutex_clear (&priv->processing_mutex);
