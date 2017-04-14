@@ -95,6 +95,7 @@ struct _PhotoBoothPrivate
 	gchar             *imgur_description;
 	GThread           *upload_thread;
 	GMutex             upload_mutex;
+	gboolean           do_twitter;
 
 	PhotoBoothLed     *led;
 };
@@ -272,6 +273,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->imgur_access_token = NULL;
 	priv->imgur_description = NULL;
 	priv->upload_thread = NULL;
+	priv->do_twitter = TRUE;
 	priv->state_change_watchdog_timeout_id = 0;
 
 	priv->led = photo_booth_led_new ();
@@ -2111,6 +2113,39 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 		curl_formfree (post);
 		g_free (filename);
 		GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
+
+		if (priv->do_twitter)
+		{
+			JsonParser *parser;
+			JsonNode *root;
+			JsonReader *reader;
+			GError *error;
+			const char *link_url;
+
+			parser = json_parser_new ();
+
+			error = NULL;
+			json_parser_load_from_data (parser, buf->str, buf->len, &error);
+			if (error)
+				{
+					GST_WARNING ("Unable to parse '%s': %s", buf->str, error->message);
+					g_error_free (error);
+					g_object_unref (parser);
+					return;
+				}
+
+			root = json_parser_get_root (parser);
+			reader = json_reader_new (root);
+			json_reader_read_member (reader, "link");
+			link_url = json_reader_get_string_value (reader);
+			GST_INFO ("imgur uploaded photo url: %s", link_url);
+
+
+			/* manipulate the object tree and then exit */
+
+			g_object_unref (parser);
+
+		}
 		g_string_free (buf, TRUE);
 	}
 	g_mutex_unlock (&priv->upload_mutex);

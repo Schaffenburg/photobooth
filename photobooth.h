@@ -18,6 +18,7 @@
 
 #include <glib-unix.h>
 #include <glib-object.h>
+#include <json-glib/json-glib.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
 #include <gphoto2/gphoto2.h>
