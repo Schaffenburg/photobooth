@@ -102,7 +102,7 @@ struct _PhotoBoothPrivate
 
 #define MOVIEPIPE "moviepipe.mjpg"
 #define DEFAULT_CONFIG "default.ini"
-#define PREVIEW_FPS 24
+#define PREVIEW_FPS 19
 #define DEFAULT_COUNTDOWN 5
 #define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
@@ -1430,8 +1430,8 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	if (priv->countdown > 1)
 	{
-		pretrigger_delay = (priv->countdown*1000)-1500;
-		snapshot_delay = (priv->countdown*1000)-100;
+		pretrigger_delay = (priv->countdown*1000)-1000;
+		snapshot_delay = (priv->countdown*1000)-5;
 	}
 	GST_DEBUG_OBJECT (pb, "started countdown of %d seconds, pretrigger in %d ms, snapshot in %d ms", priv->countdown, pretrigger_delay, snapshot_delay);
 	g_timeout_add (pretrigger_delay, (GSourceFunc) photo_booth_snapshot_prepare, pb);
