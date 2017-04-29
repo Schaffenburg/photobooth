@@ -2120,6 +2120,7 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 			JsonNode *root;
 			JsonReader *reader;
 			GError *error;
+			const char *data;
 			const char *link_url;
 
 			parser = json_parser_new ();
@@ -2127,24 +2128,24 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 			error = NULL;
 			json_parser_load_from_data (parser, buf->str, buf->len, &error);
 			if (error)
-				{
-					GST_WARNING ("Unable to parse '%s': %s", buf->str, error->message);
-					g_error_free (error);
-					g_object_unref (parser);
-					return;
-				}
+			{
+				GST_WARNING ("Unable to parse '%s': %s", buf->str, error->message);
+				g_error_free (error);
+				g_object_unref (parser);
+				return;
+			}
 
 			root = json_parser_get_root (parser);
 			reader = json_reader_new (root);
+			gboolean ret = json_reader_read_member (reader, "data");
+			GST_INFO ("imgur read data member ret=%i", ret);
+
 			json_reader_read_member (reader, "link");
 			link_url = json_reader_get_string_value (reader);
 			GST_INFO ("imgur uploaded photo url: %s", link_url);
 
-
-			/* manipulate the object tree and then exit */
-
+			g_object_unref (reader);
 			g_object_unref (parser);
-
 		}
 		g_string_free (buf, TRUE);
 	}
