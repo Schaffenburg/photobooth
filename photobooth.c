@@ -28,6 +28,8 @@
 #include <gst/app/app.h>
 #include <curl/curl.h>
 #include <X11/Xlib.h>
+#include <json-glib/json-glib.h>
+
 // #ifdef HAVE_LIBCANBERRA
 #include <canberra-gtk.h>
 // #endif
@@ -96,6 +98,7 @@ struct _PhotoBoothPrivate
 	GThread           *upload_thread;
 	GMutex             upload_mutex;
 	gboolean           do_twitter;
+	gboolean           do_flip;
 
 	PhotoBoothLed     *led;
 };
@@ -106,6 +109,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_COUNTDOWN 5
 #define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
+#define DEFAULT_FLIP TRUE
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
@@ -128,6 +132,7 @@ static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win);
+void photo_booth_flip_switched (GtkSwitch *widget, gboolean state, PhotoBoothWindow *win);
 void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win);
 void photo_booth_cancel (PhotoBooth *pb);
 
@@ -274,6 +279,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->imgur_description = NULL;
 	priv->upload_thread = NULL;
 	priv->do_twitter = TRUE;
+	priv->do_flip = DEFAULT_FLIP;
 	priv->state_change_watchdog_timeout_id = 0;
 
 	priv->led = photo_booth_led_new ();
@@ -852,7 +858,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *video_bin;
-	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_convert, *video_overlay;
+	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_flip, *video_convert, *video_overlay;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -872,6 +878,8 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	mjpeg_decoder = gst_element_factory_make ("jpegdec", "mjpeg-decoder");
 	video_scale = gst_element_factory_make ("videoscale", "mjpeg-videoscale");
 	video_convert = gst_element_factory_make ("videoconvert", "mjpeg-videoconvert");
+	video_flip = gst_element_factory_make ("videoflip", "video-flip");
+	g_object_set (G_OBJECT (video_flip), "method", priv->do_flip?4:0, NULL);
 	video_filter = gst_element_factory_make ("capsfilter", "video-capsfilter");
 	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, priv->preview_width, "height", G_TYPE_INT, priv->preview_height, NULL);
 	g_object_set (G_OBJECT (video_filter), "caps", caps, NULL);
@@ -881,16 +889,16 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	if (priv->overlay_image)
 		g_object_set (video_overlay, "location", priv->overlay_image, NULL);
 
-	if (!(mjpeg_source && mjpeg_filter && mjpeg_decoder && video_scale && video_convert && video_filter && video_overlay))
+	if (!(mjpeg_source && mjpeg_filter && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter && video_overlay))
 	{
 		GST_ERROR_OBJECT (video_bin, "Failed to make videobin pipeline element(s):%s%s%s%s%s%s%s", mjpeg_source?"":" fdsrc", mjpeg_filter?"":" capsfilter", mjpeg_decoder?"":" jpegdec",
-			video_scale?"":" videoscale", video_convert?"":" videoconvert", video_filter?"":" capsfilter", video_overlay?"":" gdkpixbufoverlay");
+			video_scale?"":" videoscale", video_convert?"":" videoconvert", video_flip?"":" videoflip", video_filter?"":" capsfilter", video_overlay?"":" gdkpixbufoverlay");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_filter, video_overlay, NULL);
+	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_overlay, NULL);
 
-	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_filter, video_overlay, NULL))
+	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_overlay, NULL))
 	{
 		GST_ERROR_OBJECT (video_bin, "couldn't link videobin elements!");
 		return FALSE;
@@ -1182,6 +1190,7 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_PREVIEW);
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	photo_booth_window_hide_cursor (priv->win);
+	gtk_widget_show (GTK_WIDGET (priv->win->switch_flip));
 
 	if (priv->screensaver_timeout > 0)
 		priv->screensaver_timeout_id = g_timeout_add_seconds (priv->screensaver_timeout, (GSourceFunc) photo_booth_screensaver, pb);
@@ -1349,6 +1358,19 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 // 		photo_booth_get_printer_status (pb);
 }
 
+void photo_booth_flip_switched (GtkSwitch *widget, gboolean state, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	priv = photo_booth_get_instance_private (pb);
+	GST_INFO_OBJECT (pb, "photo_booth_flip_switched state %i", state);
+	priv->do_flip = state;
+	GstElement *video_flip = gst_bin_get_by_name (GST_BIN (pb->video_bin), "video-flip");
+	g_object_set (G_OBJECT (video_flip), "method", priv->do_flip?4:0, NULL);
+	gst_object_unref (video_flip);
+}
+
+
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
@@ -1428,6 +1450,8 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	priv = photo_booth_get_instance_private (pb);
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
+	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
+
 	if (priv->countdown > 1)
 	{
 		pretrigger_delay = (priv->countdown*1000)-1000;
