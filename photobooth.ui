@@ -131,8 +131,8 @@
             </child>
             <child>
               <object class="GtkSwitch" id="switch_flip">
-                <property name="width_request">360</property>
-                <property name="height_request">120</property>
+                <property name="width_request">168</property>
+                <property name="height_request">72</property>
                 <property name="visible">True</property>
                 <property name="can_focus">True</property>
                 <property name="opacity">0.59999999999999998</property>
@@ -142,8 +142,8 @@
                 <signal name="state-set" handler="photo_booth_flip_switched" object="PhotoBoothWindow" swapped="no"/>
               </object>
               <packing>
-                <property name="x">460</property>
-                <property name="y">640</property>
+                <property name="x">950</property>
+                <property name="y">80</property>
               </packing>
             </child>
             <style>
