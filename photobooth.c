@@ -599,6 +599,11 @@ void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
 static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 {
 	int retval;
+	if (*cam_info)
+	{
+		GST_ERROR_OBJECT (*cam_info, "tried to do cam_init before cam_info@%p was closed!", *cam_info);
+		return FALSE;
+	}
 	*cam_info = (CameraInfo*)malloc(sizeof(struct _CameraInfo));
 	if (!cam_info)
 		return FALSE;
@@ -627,6 +632,11 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 static gboolean photo_booth_cam_close (CameraInfo **cam_info)
 {
 	int retval;
+	if (*cam_info == NULL)
+	{
+		GST_ERROR ("tried to close cam when cam_info == NULL");
+		return FALSE;
+	}
 	g_mutex_lock (&(*cam_info)->mutex);
 	retval = gp_camera_exit((*cam_info)->camera, (*cam_info)->context);
 	GST_DEBUG ("gp_camera_exit returned %i", retval);
@@ -690,20 +700,25 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 
 		if (state == CAPTURE_INIT || state == CAPTURE_FAILED && !pb->cam_info)
 		{
-			if (photo_booth_cam_init (&pb->cam_info))
+			if (pb->cam_info == NULL)
 			{
-				GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
-				if (state == CAPTURE_FAILED)
+				if (photo_booth_cam_init (&pb->cam_info))
 				{
-					photo_booth_window_set_spinner (priv->win, FALSE);
+					GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
+					if (state == CAPTURE_FAILED)
+					{
+						photo_booth_window_set_spinner (priv->win, FALSE);
+					}
 				}
-				//photo_booth_focus (pb->cam_info);
+				else {
+					gtk_label_set_text (priv->win->status, _("No camera connected!"));
+					GST_INFO_OBJECT (pb, "no camera info.");
+				}
+			}
+			if (pb->cam_info)
+			{
 				state = CAPTURE_VIDEO;
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_preview, pb);
-			}
-			else {
-				gtk_label_set_text (priv->win->status, _("No camera connected!"));
-				GST_INFO_OBJECT (pb, "no camera info.");
 			}
 			timeout = 5000;
 		}
