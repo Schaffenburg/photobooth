@@ -725,7 +725,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		else if (state == CAPTURE_PAUSED)
 			timeout = 1000;
 		else
-			timeout = 1000 / PREVIEW_FPS;
+			timeout = 1000 / priv->preview_fps;
 
 		int ret = poll(rfd, 1, timeout);
 
@@ -886,7 +886,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (mjpeg_source, "blocksize", 65536, NULL);
 
 	mjpeg_filter = gst_element_factory_make ("capsfilter", "mjpeg-capsfilter");
-	caps = gst_caps_new_simple ("image/jpeg", "width", G_TYPE_INT, priv->preview_width, "height", G_TYPE_INT, priv->preview_height, "framerate", GST_TYPE_FRACTION, PREVIEW_FPS, 1, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
+	caps = gst_caps_new_simple ("image/jpeg", "width", G_TYPE_INT, priv->preview_width, "height", G_TYPE_INT, priv->preview_height, "framerate", GST_TYPE_FRACTION, priv->preview_fps, 1, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
 	g_object_set (G_OBJECT (mjpeg_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
