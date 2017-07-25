@@ -877,7 +877,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *video_bin;
-	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_flip, *video_convert, *video_overlay;
+	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_flip, *video_convert;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -904,26 +904,22 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (G_OBJECT (video_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
-	video_overlay = gst_element_factory_make ("gdkpixbufoverlay", "video-overlay");
-	if (priv->overlay_image)
-		g_object_set (video_overlay, "location", priv->overlay_image, NULL);
-
-	if (!(mjpeg_source && mjpeg_filter && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter && video_overlay))
+	if (!(mjpeg_source && mjpeg_filter && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter))
 	{
-		GST_ERROR_OBJECT (video_bin, "Failed to make videobin pipeline element(s):%s%s%s%s%s%s%s", mjpeg_source?"":" fdsrc", mjpeg_filter?"":" capsfilter", mjpeg_decoder?"":" jpegdec",
-			video_scale?"":" videoscale", video_convert?"":" videoconvert", video_flip?"":" videoflip", video_filter?"":" capsfilter", video_overlay?"":" gdkpixbufoverlay");
+		GST_ERROR_OBJECT (video_bin, "Failed to make videobin pipeline element(s):%s%s%s%s%s%s", mjpeg_source?"":" fdsrc", mjpeg_filter?"":" capsfilter", mjpeg_decoder?"":" jpegdec",
+			video_scale?"":" videoscale", video_convert?"":" videoconvert", video_flip?"":" videoflip", video_filter?"":" capsfilter");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_overlay, NULL);
+	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL);
 
-	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_overlay, NULL))
+	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL))
 	{
 		GST_ERROR_OBJECT (video_bin, "couldn't link videobin elements!");
 		return FALSE;
 	}
 
-	pad = gst_element_get_static_pad (video_overlay, "src");
+	pad = gst_element_get_static_pad (video_filter, "src");
 	ghost = gst_ghost_pad_new ("src", pad);
 	gst_object_unref (pad);
 	gst_pad_set_active (ghost, TRUE);
@@ -1082,7 +1078,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			if (src == GST_OBJECT (pb->video_sink) && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING)
 			{
 				GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_video_start");
-				GST_DEBUG ("video_bin GST_STATE_CHANGE_PAUSED_TO_PLAYING -> hide spinner!");
+				GST_DEBUG ("video_sink GST_STATE_CHANGE_PAUSED_TO_PLAYING -> hide spinner!");
 				photo_booth_window_hide_cursor (priv->win);
 				photo_booth_window_set_spinner (priv->win, FALSE);
 			}
@@ -1097,10 +1093,15 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		case GST_MESSAGE_STREAM_START:
 		{
 			GST_DEBUG ("GST_MESSAGE_STREAM_START! state=%s", photo_booth_state_get_name (priv->state));
+			if (priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_PREVIEW_COOLDOWN)
+			{
+				gtk_widget_show (GTK_WIDGET (priv->win->image));
+			}
+			break;
 		}
 		default:
 		{
-// 			GST_DEBUG ("gst_message from %" GST_PTR_FORMAT ": %" GST_PTR_FORMAT "", GST_MESSAGE_SRC(message), message);
+			GST_TRACE ("gst_message from %" GST_PTR_FORMAT ": %" GST_PTR_FORMAT "", GST_MESSAGE_SRC(message), message);
 		}
 	}
 	return TRUE;
@@ -1114,6 +1115,8 @@ static void photo_booth_video_widget_ready (PhotoBooth *pb)
 	GstVideoRectangle s1, s2, rect;
 	GstElement *element;
 	GstCaps *caps;
+	GdkPixbuf *overlay_pixbuf;
+	GError *error = NULL;
 
 	priv = photo_booth_get_instance_private (pb);
 	gtk_widget_get_preferred_size (priv->win->gtkgstwidget, NULL, &size);
@@ -1132,13 +1135,24 @@ static void photo_booth_video_widget_ready (PhotoBooth *pb)
 	gst_caps_unref (caps);
 	gst_object_unref (element);
 
-	element = gst_bin_get_by_name (GST_BIN (pb->video_bin), "video-overlay");
-	g_object_set (element, "overlay-width", rect.w, NULL);
-	g_object_set (element, "overlay-height", rect.h, NULL);
-	gst_object_unref (element);
-
 	GST_DEBUG_OBJECT (pb, "gtksink widget is ready. output dimensions: %dx%d", rect.w, rect.h);
 	priv->video_size = rect;
+
+	overlay_pixbuf = gdk_pixbuf_new_from_file_at_size (priv->overlay_image, rect.w, rect.h, &error);
+	if (error) {
+		GST_ERROR_OBJECT (pb, "%s\n", error->message);
+		return;
+	}
+	if (gdk_pixbuf_get_width (overlay_pixbuf) != rect.w || gdk_pixbuf_get_height (overlay_pixbuf) != rect.h)
+	{
+		GST_DEBUG_OBJECT (pb, "overlay_image original dimensions %dx%d. aspect mismatch -> we need to scale!", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf));
+		overlay_pixbuf = gdk_pixbuf_scale_simple (overlay_pixbuf, rect.w, rect.h, GDK_INTERP_BILINEAR);
+	}
+	rect.x = (size2.width-gdk_pixbuf_get_width (overlay_pixbuf))/2;
+	rect.y = (size2.height-gdk_pixbuf_get_height (overlay_pixbuf))/2;
+	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
+	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
+	gtk_fixed_move (GTK_FIXED (gtk_widget_get_parent (GTK_WIDGET (priv->win->image))), GTK_WIDGET (priv->win->image), rect.x, 0);
 }
 
 static gboolean photo_booth_preview (PhotoBooth *pb)
@@ -1519,6 +1533,8 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
 
 	gst_element_set_state ((priv->audio_pipeline), GST_STATE_READY);
 
+	gtk_widget_hide (GTK_WIDGET (priv->win->gtkgstwidget));
+
 	SEND_COMMAND (pb, CONTROL_PHOTO);
 
 	GST_DEBUG_OBJECT (pb, "preparing for snapshot...");
@@ -1829,6 +1845,8 @@ static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 	priv->photo_block_id = 0;
 
 	g_mutex_unlock (&priv->processing_mutex);
+	gtk_widget_hide (GTK_WIDGET (priv->win->image));
+	gtk_widget_show (GTK_WIDGET (priv->win->gtkgstwidget));
 	GST_DEBUG_OBJECT (pb, "removed output file encoder and writer elements and paused and unlocked.");
 	return FALSE;
 }

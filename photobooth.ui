@@ -146,6 +146,21 @@
                 <property name="y">80</property>
               </packing>
             </child>
+            <child>
+              <object class="GtkImage" id="image">
+                <property name="width_request">1280</property>
+                <property name="height_request">1024</property>
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="hexpand">True</property>
+                <property name="vexpand">True</property>
+                <property name="stock">gtk-missing-image</property>
+              </object>
+              <packing>
+                <property name="x">0</property>
+                <property name="y">0</property>
+              </packing>
+            </child>
             <style>
               <class name="transparentbg"/>
             </style>
