@@ -142,7 +142,7 @@ static void photo_booth_change_state (PhotoBooth *pb, PhotoboothState state);
 static void photo_booth_quit_signal (PhotoBooth *pb);
 static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb);
 static void photo_booth_setup_window (PhotoBooth *pb);
-static void photo_booth_video_widget_ready (PhotoBooth *pb);
+static gboolean photo_booth_video_widget_ready (PhotoBooth *pb);
 static gboolean photo_booth_preview (PhotoBooth *pb);
 static gboolean photo_booth_preview_ready (PhotoBooth *pb);
 static void photo_booth_snapshot_start (PhotoBooth *pb);
@@ -1073,7 +1073,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			GST_LOG ("gst %" GST_PTR_FORMAT " state transition %s -> %s. %s", src, gst_element_state_get_name(GST_STATE_TRANSITION_CURRENT(transition)), gst_element_state_get_name(GST_STATE_TRANSITION_NEXT(transition)), photo_booth_state_get_name (priv->state));
 			if (src == GST_OBJECT (pb->video_sink) && transition == GST_STATE_CHANGE_READY_TO_PAUSED)
 			{
-				photo_booth_video_widget_ready (pb);
+				g_timeout_add (1, (GSourceFunc) photo_booth_video_widget_ready, pb);
 			}
 			if (src == GST_OBJECT (pb->video_sink) && transition == GST_STATE_CHANGE_PAUSED_TO_PLAYING)
 			{
@@ -1107,7 +1107,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 	return TRUE;
 }
 
-static void photo_booth_video_widget_ready (PhotoBooth *pb)
+static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GtkRequisition size;
@@ -1141,7 +1141,7 @@ static void photo_booth_video_widget_ready (PhotoBooth *pb)
 	overlay_pixbuf = gdk_pixbuf_new_from_file_at_size (priv->overlay_image, rect.w, rect.h, &error);
 	if (error) {
 		GST_ERROR_OBJECT (pb, "%s\n", error->message);
-		return;
+		return FALSE;
 	}
 	if (gdk_pixbuf_get_width (overlay_pixbuf) != rect.w || gdk_pixbuf_get_height (overlay_pixbuf) != rect.h)
 	{
@@ -1153,6 +1153,8 @@ static void photo_booth_video_widget_ready (PhotoBooth *pb)
 	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
 	gtk_fixed_move (GTK_FIXED (gtk_widget_get_parent (GTK_WIDGET (priv->win->image))), GTK_WIDGET (priv->win->image), rect.x, 0);
+
+	return FALSE;
 }
 
 static gboolean photo_booth_preview (PhotoBooth *pb)
