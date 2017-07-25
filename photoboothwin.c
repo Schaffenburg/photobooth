@@ -192,11 +192,11 @@ void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 	priv->countdown = count+1;
 	_pbw_tick_countdown(win);
 	gtk_widget_show (GTK_WIDGET (priv->countdown_label));
-  for (int i = 1; i <= count+2; i++)
-  {
-    g_timeout_add (1000*i, (GSourceFunc) _pbw_tick_countdown, win);
-    GST_INFO ("added timeout callback at %i", 1000*i);
-  }
+	for (int i = 1; i <= count+2; i++)
+	{
+		g_timeout_add (1000*i, (GSourceFunc) _pbw_tick_countdown, win);
+		GST_INFO ("added timeout callback at %i", 1000*i);
+	}
 }
 
 void photo_booth_window_set_copies_show (PhotoBoothWindow *win, gint min, gint max, gint def)

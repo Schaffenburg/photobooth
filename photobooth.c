@@ -127,7 +127,7 @@ GST_DEBUG_CATEGORY_STATIC (photo_booth_debug);
 
 /* GObject / GApplication */
 static void photo_booth_activate (GApplication *app);
-static void photo_booth_open (GApplication  *app, GFile **files, gint n_files, const gchar *hint);
+static void photo_booth_open (GApplication *app, GFile **files, gint n_files, const gchar *hint);
 static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
@@ -1269,9 +1269,9 @@ static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, 
 
 	g_mutex_lock (&priv->processing_mutex);
 
-        GstPad *sinkpad;
-        sinkpad = gst_element_get_static_pad (pb->video_sink, "sink");
-        priv->sink_block_id = gst_pad_add_probe (sinkpad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
+	GstPad *sinkpad;
+	sinkpad = gst_element_get_static_pad (pb->video_sink, "sink");
+	priv->sink_block_id = gst_pad_add_probe (sinkpad, GST_PAD_PROBE_TYPE_DATA_DOWNSTREAM, _gst_video_probecb, pb, NULL);
 
 	gst_element_query_position (priv->screensaver_playbin, GST_FORMAT_TIME, &priv->last_play_pos);
 	GST_DEBUG ("stop screensaver @ %" GST_TIME_FORMAT " %" GST_PTR_FORMAT " block_id=%lu", GST_TIME_ARGS (priv->last_play_pos), pad, priv->sink_block_id );

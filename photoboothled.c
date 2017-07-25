@@ -36,7 +36,7 @@ static void photo_booth_led_class_init (PhotoBoothLedClass *klass)
 
 	GST_DEBUG_CATEGORY_INIT (photo_booth_led_debug, "photoboothled", GST_DEBUG_BOLD | GST_DEBUG_FG_WHITE | GST_DEBUG_BG_BLUE, "PhotoBoothLed");
 
-	gobject_class->finalize      = photo_booth_led_finalize;
+	gobject_class->finalize = photo_booth_led_finalize;
 }
 
 static void photo_booth_led_init (PhotoBoothLed *led)
@@ -152,10 +152,10 @@ void photo_booth_led_printer (PhotoBoothLed *led, gint copies)
 		g_free (cmd);
 * arduino doesn't process this correctly */
 		char cmd = LED_PRINT;
-                write (led->fd, &cmd, 1);
+		write (led->fd, &cmd, 1);
 		cmd = copies+0x30; //!HACK won't work for >9 copies
 		write (led->fd, &cmd, 1);
-                GST_DEBUG_OBJECT(led, "printing %c%i", cmd, copies);
+		GST_DEBUG_OBJECT(led, "printing %c%i", cmd, copies);
 	}
 }
 
