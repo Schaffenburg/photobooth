@@ -382,6 +382,9 @@ static void photo_booth_dispose (GObject *object)
 	g_free (G_template_filename);
 }
 
+#define READ_INT_INI_KEY(var, gkf, grp, key) {int i = g_key_file_get_integer (gkf, grp, key, NULL); if (i) {var = i; GST_TRACE ("read ini key [%s]:%s = %d", grp, key, var);} else {GST_TRACE ("ini key [%s]:%s not specified. keep default value %d", grp, key, var);}}
+#define READ_STR_INI_KEY(var, gkf, grp, key) {gchar *str = g_key_file_get_string (gkf, grp, key, NULL); if (str) {var = g_strdup(str); GST_TRACE ("read ini key [%s]:%s = %s", grp, key, var); g_free(str);} else {GST_TRACE ("ini key [%s]:%s not specified. keep default value %s", grp, key, var);}}
+
 void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 {
 	GKeyFile* gkf;
@@ -420,12 +423,13 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		}
 		if (g_key_file_has_group (gkf, "general"))
 		{
-			G_template_filename = g_key_file_get_string (gkf, "general", "template", NULL);
-			G_stylesheet_filename = g_key_file_get_string (gkf, "general", "stylesheet", NULL);
-			priv->countdown = g_key_file_get_integer (gkf, "general", "countdown", NULL);
-			priv->overlay_image = g_key_file_get_string (gkf, "general", "overlay_image", NULL);
-			priv->screensaver_timeout = g_key_file_get_integer (gkf, "general", "screensaver_timeout", NULL);
-			gchar *screensaverfile = g_key_file_get_string (gkf, "general", "screensaver_file", NULL);
+			gchar *screensaverfile = NULL, *save_path_template = NULL;
+			READ_STR_INI_KEY (G_template_filename, gkf, "general", "template");
+			READ_STR_INI_KEY (G_stylesheet_filename, gkf, "general", "stylesheet");
+			READ_INT_INI_KEY (priv->countdown, gkf, "general", "countdown");
+			READ_STR_INI_KEY (priv->overlay_image, gkf, "general", "overlay_image");
+			READ_INT_INI_KEY (priv->screensaver_timeout, gkf, "general", "screensaver_timeout");
+			READ_STR_INI_KEY (screensaverfile, gkf, "general", "screensaver_file");
 			if (screensaverfile)
 			{
 				gchar *screensaverabsfilename;
@@ -441,7 +445,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				g_free (screensaverfile);
 				g_free (screensaverabsfilename);
 			}
-			gchar *save_path_template = g_key_file_get_string (gkf, "general", "save_path_template", NULL);
+			READ_STR_INI_KEY (save_path_template, gkf, "general", "save_path_template");
 			if (save_path_template)
 			{
 				gchar *cdir;
@@ -461,7 +465,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		}
 		if (g_key_file_has_group (gkf, "sounds"))
 		{
-			gchar *countdownaudiofile = g_key_file_get_string (gkf, "sounds", "countdown_audio_file", NULL);
+			gchar *countdownaudiofile = NULL;
+			READ_STR_INI_KEY (countdownaudiofile, gkf, "sounds", "countdown_audio_file");
 			if (countdownaudiofile)
 			{
 				gchar *audioabsfilename;
@@ -477,38 +482,37 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				g_free (countdownaudiofile);
 				g_free (audioabsfilename);
 			}
-			priv->ack_sound = g_key_file_get_string (gkf, "sounds", "ack_sound", NULL);
-			priv->error_sound = g_key_file_get_string (gkf, "sounds", "error_sound", NULL);
+			READ_STR_INI_KEY (priv->ack_sound, gkf, "sounds", "ack_sound");
+			READ_STR_INI_KEY (priv->error_sound, gkf, "sounds", "error_sound");
 		}
 		if (g_key_file_has_group (gkf, "printer"))
 		{
-			priv->printer_backend = g_key_file_get_string (gkf, "printer", "backend", NULL);
-			priv->print_copies_min = g_key_file_get_integer (gkf, "printer", "copies_min", NULL);
-			priv->print_copies_max = g_key_file_get_integer (gkf, "printer", "copies_max", NULL);
-			priv->print_copies_default = g_key_file_get_integer (gkf, "printer", "copies_default", NULL);
-			priv->print_dpi = g_key_file_get_integer (gkf, "printer", "dpi", NULL);
-			priv->print_width = g_key_file_get_integer (gkf, "printer", "width", NULL);
-			priv->print_height = g_key_file_get_integer (gkf, "printer", "height", NULL);
-			priv->print_icc_profile = g_key_file_get_string (gkf, "printer", "icc_profile", NULL);
+			READ_STR_INI_KEY (priv->printer_backend, gkf, "printer", "backend");
+			READ_INT_INI_KEY (priv->print_copies_min, gkf, "printer", "copies_min");
+			READ_INT_INI_KEY (priv->print_copies_max, gkf, "printer", "copies_max");
+			READ_INT_INI_KEY (priv->print_copies_default, gkf, "printer", "copies_default");
+			READ_INT_INI_KEY (priv->print_dpi, gkf, "printer", "dpi");
+			READ_INT_INI_KEY (priv->print_width, gkf, "printer", "width");
+			READ_INT_INI_KEY (priv->print_height, gkf, "printer", "height");
+			READ_STR_INI_KEY (priv->print_icc_profile, gkf, "printer", "icc_profile");
 			priv->print_x_offset = g_key_file_get_double (gkf, "printer", "offset_x", NULL);
 			priv->print_y_offset = g_key_file_get_double (gkf, "printer", "offset_y", NULL);
 		}
 		if (g_key_file_has_group (gkf, "camera"))
 		{
-			priv->preview_fps = g_key_file_get_integer (gkf, "camera", "fps", NULL);
-			priv->preview_width = g_key_file_get_integer (gkf, "camera", "preview_width", NULL);
-			priv->preview_height = g_key_file_get_integer (gkf, "camera", "preview_height", NULL);
+			READ_INT_INI_KEY (priv->preview_fps, gkf, "camera", "preview_fps")
+			READ_INT_INI_KEY (priv->preview_width, gkf, "camera", "preview_width");
+			READ_INT_INI_KEY (priv->preview_height, gkf, "camera", "preview_height");
 			priv->cam_reeinit_before_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_before_snapshot", NULL);
 			priv->cam_reeinit_after_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_after_snapshot", NULL);
-			priv->cam_icc_profile = g_key_file_get_string (gkf, "camera", "icc_profile", NULL);
 		}
 		if (g_key_file_has_group (gkf, "upload"))
 		{
-			priv->facebook_put_uri = g_key_file_get_string (gkf, "upload", "facebook_put_uri", NULL);
-			priv->imgur_album_id = g_key_file_get_string (gkf, "upload", "imgur_album_id", NULL);
-			priv->imgur_access_token = g_key_file_get_string (gkf, "upload", "imgur_access_token", NULL);
-			priv->imgur_description = g_key_file_get_string (gkf, "upload", "imgur_description", NULL);
-			priv->upload_timeout = g_key_file_get_integer (gkf, "upload", "upload_timeout", NULL);
+			READ_STR_INI_KEY (priv->facebook_put_uri, gkf, "upload", "facebook_put_uri");
+			READ_STR_INI_KEY (priv->imgur_album_id, gkf, "upload", "imgur_album_id");
+			READ_STR_INI_KEY (priv->imgur_access_token, gkf, "upload", "imgur_access_token");
+			READ_STR_INI_KEY (priv->imgur_description, gkf, "upload", "imgur_description");
+			READ_INT_INI_KEY (priv->upload_timeout, gkf, "upload", "upload_timeout");
 		}
 	}
 
