@@ -877,7 +877,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *video_bin;
-	GstElement *mjpeg_source, *mjpeg_decoder, *mjpeg_filter, *video_filter, *video_scale, *video_flip, *video_convert;
+	GstElement *mjpeg_source, *mjpeg_filter, *mjpeg_parser, *mjpeg_decoder, *video_filter, *video_scale, *video_flip, *video_convert;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -894,6 +894,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (G_OBJECT (mjpeg_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
+	mjpeg_parser = gst_element_factory_make ("jpegparse", "mjpeg-parser");
 	mjpeg_decoder = gst_element_factory_make ("jpegdec", "mjpeg-decoder");
 	video_scale = gst_element_factory_make ("videoscale", "mjpeg-videoscale");
 	video_convert = gst_element_factory_make ("videoconvert", "mjpeg-videoconvert");
@@ -904,16 +905,16 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (G_OBJECT (video_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
-	if (!(mjpeg_source && mjpeg_filter && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter))
+	if (!(mjpeg_source && mjpeg_filter && mjpeg_parser && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter))
 	{
-		GST_ERROR_OBJECT (video_bin, "Failed to make videobin pipeline element(s):%s%s%s%s%s%s", mjpeg_source?"":" fdsrc", mjpeg_filter?"":" capsfilter", mjpeg_decoder?"":" jpegdec",
-			video_scale?"":" videoscale", video_convert?"":" videoconvert", video_flip?"":" videoflip", video_filter?"":" capsfilter");
+		GST_ERROR_OBJECT (video_bin, "Failed to make videobin pipeline element(s):%s%s%s%s%s%s%s", mjpeg_source?"":" fdsrc", mjpeg_filter?"":" capsfilter", mjpeg_parser?"":" jpegparse",
+			mjpeg_decoder?"":" jpegdec", video_scale?"":" videoscale", video_convert?"":" videoconvert", video_flip?"":" videoflip", video_filter?"":" capsfilter");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL);
+	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL);
 
-	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL))
+	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL))
 	{
 		GST_ERROR_OBJECT (video_bin, "couldn't link videobin elements!");
 		return FALSE;
@@ -996,7 +997,7 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	pb->pipeline = gst_pipeline_new ("photobooth-pipeline");
 
 	pb->video_sink = gst_element_factory_make ("gtksink", "video-sink");
-// 	g_object_set (pb->video_sink, "sync", FALSE, NULL);
+	g_object_set (pb->video_sink, "sync", FALSE, NULL);
 
 	if (!(pb->video_sink))
 	{
