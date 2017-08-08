@@ -28,6 +28,11 @@ struct _PhotoBoothWindowPrivate
 	GtkLabel *countdown_label;
 	GtkScale *copies;
 	gint countdown;
+	GtkImage *mask;
+	GtkWidget *mask_event;
+	GtkFixed *fixed;
+	gboolean dragging;
+	gint startoffsetx, startoffsety;
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLICATION_WINDOW);
@@ -64,6 +69,9 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, copies);
+	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, mask);
+	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, mask_event);
+	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, fixed);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, image);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_cancel);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_print);
@@ -99,6 +107,10 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_button_set_label (win->button_print, _("Print photo"));
 	gtk_button_set_label (win->button_upload, _("Upload photo"));
 	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
+
+	gtk_widget_set_has_window (GTK_WIDGET (priv->fixed), TRUE);
+	priv->dragging = FALSE;
+	priv->startoffsetx = 0, priv->startoffsety = 0;
 }
 
 void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkgstwidget)
@@ -233,6 +245,51 @@ gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, g
 	if (intval == 1)
 		return g_strdup_printf (_("1 print"));
 	return g_strdup_printf (_("%d prints"), intval);
+}
+
+gboolean photo_booth_window_mask_press (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+	PhotoBoothWindowPrivate *priv;
+	GtkWidget* p;
+	gint widgetoffsetx, widgetoffsety, screenoffsetx, screenoffsety;
+
+	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (user_data));
+
+	priv->dragging = TRUE;
+	p = gtk_widget_get_parent (widget);
+	gdk_window_get_position (gtk_widget_get_parent_window (p), &widgetoffsetx, &widgetoffsety);
+
+	p = gtk_widget_get_parent (p);
+	gdk_window_get_position (gtk_widget_get_parent_window (p), &screenoffsetx, &screenoffsety);
+
+	priv->startoffsetx = (int)event->x+widgetoffsetx+screenoffsetx;
+	priv->startoffsety = (int)event->y+widgetoffsety+screenoffsety;
+
+	return TRUE;
+}
+
+gboolean photo_booth_window_mask_release (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+	PhotoBoothWindowPrivate *priv;
+	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (user_data));
+	priv->dragging = FALSE;
+	return TRUE;
+}
+
+gboolean photo_booth_window_mask_motion (GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+{
+	PhotoBoothWindowPrivate *priv;
+	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (user_data));
+
+	GST_TRACE_OBJECT (user_data, "event (%.0f,%.0f) root (%d,%d) off (%d,%d)", event->x, event->y, (int)event->x_root, (int)event->y_root, priv->startoffsetx, priv->startoffsety);
+
+	if (priv->dragging)
+	{
+		int x = (int)event->x_root - priv->startoffsetx;
+		int y = (int)event->y_root - priv->startoffsety;
+		gtk_fixed_move (GTK_FIXED (gtk_widget_get_parent (widget)), GTK_WIDGET (widget), x, y);
+	}
+	return TRUE;
 }
 
 PhotoBoothWindow * photo_booth_window_new (PhotoBooth *pb)

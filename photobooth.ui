@@ -48,7 +48,7 @@
           </packing>
         </child>
         <child type="overlay">
-          <object class="GtkFixed">
+          <object class="GtkFixed" id="fixed">
             <property name="visible">True</property>
             <property name="can_focus">False</property>
             <child>
@@ -156,9 +156,31 @@
                 <property name="vexpand">True</property>
                 <property name="stock">gtk-missing-image</property>
               </object>
+            </child>
+            <child>
+              <object class="GtkEventBox" id="mask_event">
+                <property name="width_request">100</property>
+                <property name="height_request">80</property>
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="events">GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON1_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK</property>
+                <signal name="button-press-event" handler="photo_booth_window_mask_press" swapped="no"/>
+                <signal name="button-release-event" handler="photo_booth_window_mask_release" swapped="no"/>
+                <signal name="motion-notify-event" handler="photo_booth_window_mask_motion" swapped="no"/>
+                <child>
+                  <object class="GtkImage" id="mask">
+                    <property name="width_request">100</property>
+                    <property name="height_request">80</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="pixbuf">overlays/mask_nasenbrille.png</property>
+                    <property name="icon_size">5</property>
+                  </object>
+                </child>
+              </object>
               <packing>
-                <property name="x">0</property>
-                <property name="y">0</property>
+                <property name="x">435</property>
+                <property name="y">394</property>
               </packing>
             </child>
             <style>

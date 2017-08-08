@@ -54,6 +54,9 @@ void                    photo_booth_window_hide_cursor      (PhotoBoothWindow *w
 void                    photo_booth_window_show_cursor      (PhotoBoothWindow *win);
 void                    photo_booth_window_set_copies_show  (PhotoBoothWindow *win, gint min, gint max, gint def);
 gint                    photo_booth_window_get_copies_hide  (PhotoBoothWindow *win);
+gboolean                photo_booth_window_mask_press       (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean                photo_booth_window_mask_release     (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean                photo_booth_window_mask_motion      (GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
 
 G_END_DECLS
 
