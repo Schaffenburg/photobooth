@@ -1,4 +1,5 @@
 Schaffenburg e.V.'s Photobooth Software
+
 (CC) by Andreas Frisch (Fraxinas) <photobooth@schaffenburg.org>
 
 initially developed and tested under `ARCH Linux`.
