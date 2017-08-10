@@ -1706,10 +1706,13 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 				SEND_COMMAND (pb, CONTROL_REINIT);
 			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
 			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
-			gtk_widget_show (GTK_WIDGET (priv->win->button_print));
+			if (priv->print_copies_max)
+			{
+				gtk_widget_show (GTK_WIDGET (priv->win->button_print));
+				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
+			}
 			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
-			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			break;
 		}
 		case PB_STATE_PROCESS_PHOTO:
