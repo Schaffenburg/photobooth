@@ -55,6 +55,7 @@ struct _PhotoBoothPrivate
 	gint               state_change_watchdog_timeout_id;
 
 	guint32            countdown;
+	gint               preview_timeout;
 	gchar             *overlay_image;
 
 	gchar             *save_path_template;
@@ -446,6 +447,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_STR_INI_KEY (G_template_filename, gkf, "general", "template");
 			READ_STR_INI_KEY (G_stylesheet_filename, gkf, "general", "stylesheet");
 			READ_INT_INI_KEY (priv->countdown, gkf, "general", "countdown");
+			READ_INT_INI_KEY (priv->preview_timeout, gkf, "general", "preview_timeout");
 			READ_STR_INI_KEY (priv->overlay_image, gkf, "general", "overlay_image");
 			READ_INT_INI_KEY (priv->screensaver_timeout, gkf, "general", "screensaver_timeout");
 			READ_STR_INI_KEY (screensaverfile, gkf, "general", "screensaver_file");
@@ -1711,6 +1713,8 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 				gtk_widget_show (GTK_WIDGET (priv->win->button_print));
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			}
+			if (priv->preview_timeout > 0)
+				g_timeout_add_seconds (priv->preview_timeout, (GSourceFunc) photo_booth_cancel, pb);
 			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
 			break;
