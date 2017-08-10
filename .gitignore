@@ -1,0 +1,6 @@
+photos
+*-swp
+*.o
+photobooth
+resources.c
+
