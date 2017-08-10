@@ -382,8 +382,27 @@ static void photo_booth_dispose (GObject *object)
 	g_free (G_template_filename);
 }
 
-#define READ_INT_INI_KEY(var, gkf, grp, key) {int i = g_key_file_get_integer (gkf, grp, key, NULL); if (i) {var = i; GST_TRACE ("read ini key [%s]:%s = %d", grp, key, var);} else {GST_TRACE ("ini key [%s]:%s not specified. keep default value %d", grp, key, var);}}
-#define READ_STR_INI_KEY(var, gkf, grp, key) {gchar *str = g_key_file_get_string (gkf, grp, key, NULL); if (str) {var = g_strdup(str); GST_TRACE ("read ini key [%s]:%s = %s", grp, key, var); g_free(str);} else {GST_TRACE ("ini key [%s]:%s not specified. keep default value %s", grp, key, var);}}
+#define READ_INT_INI_KEY(var, gkf, grp, key) {                                         \
+  GError *err=NULL;                                                                    \
+  int i = g_key_file_get_integer (gkf, grp, key, &err);                                \
+  if (!err) {                                                                          \
+    var = i; GST_TRACE ("read ini key [%s]:%s = %d", grp, key, var);                   \
+  } else {                                                                             \
+    GST_TRACE ("ini key [%s]:%s not specified. keep default value %d", grp, key, var); \
+    g_error_free (err);                                                                \
+  }                                                                                    \
+}
+#define READ_STR_INI_KEY(var, gkf, grp, key) {                                         \
+  GError *err=NULL;                                                                    \
+  gchar *str = g_key_file_get_string (gkf, grp, key, &err);                            \
+  if (!err) {                                                                          \
+    var = g_strdup(str);                                                               \
+    GST_TRACE ("read ini key [%s]:%s = %s", grp, key, var);                            \
+    g_free(str);                                                                       \
+  } else {                                                                             \
+    GST_TRACE ("ini key [%s]:%s not specified. keep default value %s", grp, key, var); \
+    g_error_free (err);}                                                               \
+}
 
 void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 {
