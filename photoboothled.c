@@ -41,8 +41,8 @@ static void photo_booth_led_class_init (PhotoBoothLedClass *klass)
 
 static void photo_booth_led_init (PhotoBoothLed *led)
 {
-	led->fd = -1;
 	int i;
+	led->fd = -1;
 	for (i=0; i < 10; i++)
 	{
 		gchar *devicename = g_strdup_printf ("%s%d", LED_DEVICENAME, i);
