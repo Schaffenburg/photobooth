@@ -803,8 +803,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					static volatile gsize cam_configured = 0;
 					GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
 					if (g_once_init_enter (&cam_configured))
+					{
 						photo_booth_cam_config (pb);
-					g_once_init_leave (&cam_configured, 1);
+						g_once_init_leave (&cam_configured, 1);
+					}
 					if (state == CAPTURE_FAILED)
 					{
 						photo_booth_window_set_spinner (priv->win, FALSE);
@@ -894,6 +896,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					GST_ERROR_OBJECT (pb, "Taking photo failed!");
 					photo_booth_cam_close (&pb->cam_info);
 					photo_booth_change_state (pb, PB_STATE_NONE);
+					gtk_widget_show (GTK_WIDGET (priv->win->gtkgstwidget));
 					state = CAPTURE_FAILED;
 				}
 			}
