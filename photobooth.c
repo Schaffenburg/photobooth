@@ -74,6 +74,7 @@ struct _PhotoBoothPrivate
 	
 	gint               preview_fps, preview_width, preview_height;
 	gboolean           cam_reeinit_before_snapshot, cam_reeinit_after_snapshot;
+	gboolean           cam_keep_files;
 	gchar             *cam_icc_profile;
 
 	GstElement        *audio_pipeline;
@@ -159,7 +160,7 @@ static gboolean photo_booth_capture_paused_cb (PhotoBooth *pb);
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
 static gboolean photo_booth_cam_close (CameraInfo **cam_info);
 static gboolean photo_booth_focus (CameraInfo *cam_info);
-static gboolean photo_booth_take_photo (CameraInfo *cam_info);
+static gboolean photo_booth_take_photo (PhotoBooth *pb);
 static void photo_booth_flush_pipe (int fd);
 static void photo_booth_capture_thread_func (PhotoBooth *pb);
 static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, void *data);
@@ -259,6 +260,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->print_buffer = NULL;
 	priv->print_icc_profile = NULL;
 	priv->cam_icc_profile = NULL;
+	priv->cam_keep_files = FALSE;
 	priv->printer_backend = NULL;
 	priv->printer_settings = NULL;
 	priv->overlay_image = NULL;
@@ -526,6 +528,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_INT_INI_KEY (priv->preview_height, gkf, "camera", "preview_height");
 			priv->cam_reeinit_before_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_before_snapshot", NULL);
 			priv->cam_reeinit_after_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_after_snapshot", NULL);
+			priv->cam_keep_files = g_key_file_get_boolean (gkf, "camera", "cam_keep_files", NULL);
 		}
 		if (g_key_file_has_group (gkf, "upload"))
 		{
@@ -651,6 +654,7 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 		photo_booth_cam_close (&(*cam_info));
 		return FALSE;
 	}
+
 	return TRUE;
 }
 
@@ -672,6 +676,73 @@ static gboolean photo_booth_cam_close (CameraInfo **cam_info)
 	free (*cam_info);
 	*cam_info = NULL;
 	return GP_OK ? TRUE : FALSE;
+}
+
+static void photo_booth_cam_config (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	int	ret, ro;
+	CameraWidgetType	type;
+	CameraWidget *rootconfig = NULL, *child;
+	const char *name = "capturetarget";
+	const char *value = priv->cam_keep_files ? "1" : "0";
+	ret = gp_camera_get_single_config (pb->cam_info->camera, name, &child, pb->cam_info->context);
+	rootconfig = child;
+	if (ret != GP_OK)
+		goto fail;
+	ret = gp_widget_get_child_by_name (rootconfig, name, &child);
+	if (ret != GP_OK)
+		goto fail;
+	ret = gp_widget_get_type (child, &type);
+	if (ret != GP_OK)
+		goto fail;
+	if (type == GP_WIDGET_RADIO)
+	{
+		int cnt, i;
+		char *endptr;
+		cnt = gp_widget_count_choices (child);
+		if (cnt < GP_OK) {
+			ret = cnt;
+			goto fail;
+		}
+		ret = GP_ERROR_BAD_PARAMETERS;
+		for ( i=0; i<cnt; i++) {
+			const char *choice;
+
+			ret = gp_widget_get_choice (child, i, &choice);
+			if (ret != GP_OK)
+				continue;
+			if (!strcmp (choice, value)) {
+				ret = gp_widget_set_value (child, value);
+				break;
+			}
+		}
+		if (i != cnt)
+			goto fail;
+		i = strtol (value, &endptr, 10);
+		if ((value != endptr) && (*endptr == '\0')) {
+			if ((i>= 0) && (i < cnt)) {
+				const char *choice;
+				ret = gp_widget_get_choice (child, i, &choice);
+				if (ret == GP_OK)
+					ret = gp_widget_set_value (child, choice);
+			}
+		}
+		ret = gp_widget_set_value (child, value);
+		if (ret != GP_OK)
+			goto fail;
+		ret = gp_camera_set_single_config (pb->cam_info->camera, name, child, pb->cam_info->context);
+		if (ret != GP_OK)
+			goto fail;
+		GST_INFO_OBJECT (pb, "capturetarget configured to %s in camera", value);
+		gp_widget_free (rootconfig);
+		return;
+	}
+
+fail:
+	GST_WARNING_OBJECT (pb, "couldn't set %s config!", name);
+	if (rootconfig)
+		gp_widget_free (rootconfig);
 }
 
 static void photo_booth_flush_pipe (int fd)
@@ -729,7 +800,11 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 			{
 				if (photo_booth_cam_init (&pb->cam_info))
 				{
+					static volatile gsize cam_configured = 0;
 					GST_INFO_OBJECT (pb, "photo_booth_cam_inited @ %p", pb->cam_info);
+					if (g_once_init_enter (&cam_configured))
+						photo_booth_cam_config (pb);
+					g_once_init_leave (&cam_configured, 1);
 					if (state == CAPTURE_FAILED)
 					{
 						photo_booth_window_set_spinner (priv->win, FALSE);
@@ -806,7 +881,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 			{
 				gtk_label_set_text (priv->win->status, _("Taking photo..."));
 				photo_booth_led_flash (priv->led);
-				ret = photo_booth_take_photo (pb->cam_info);
+				ret = photo_booth_take_photo (pb);
 				photo_booth_led_black (priv->led);
 				if (ret && pb->cam_info->size)
 				{
@@ -1606,44 +1681,44 @@ static gboolean photo_booth_focus (CameraInfo *cam_info)
 	return TRUE;
 }
 
-static gboolean photo_booth_take_photo (CameraInfo *cam_info)
+static gboolean photo_booth_take_photo (PhotoBooth *pb)
 {
 	int gpret;
 	CameraFile *file;
 	CameraFilePath camera_file_path;
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 
-	g_mutex_lock (&cam_info->mutex);
-	strcpy (camera_file_path.folder, "/");
-	strcpy (camera_file_path.name, "foo.jpg");
-// 	snprintf (camera_file_path.name, 128, "pb_capt_%04d", cam_info->preview_capture_count);
-	gpret = gp_camera_capture (cam_info->camera, GP_CAPTURE_IMAGE, &camera_file_path, cam_info->context);
-	GST_DEBUG ("gp_camera_capture gpret=%i Pathname on the camera: %s/%s", gpret, camera_file_path.folder, camera_file_path.name);
+	g_mutex_lock (&pb->cam_info->mutex);
+	gpret = gp_camera_capture (pb->cam_info->camera, GP_CAPTURE_IMAGE, &camera_file_path, pb->cam_info->context);
+	GST_DEBUG_OBJECT (pb, "gp_camera_capture gpret=%i Pathname on the camera: %s/%s", gpret, camera_file_path.folder, camera_file_path.name);
 	if (gpret < 0)
 		goto fail;
 
 	gpret = gp_file_new (&file);
-	GST_DEBUG ("gp_file_new gpret=%i", gpret);
+	GST_DEBUG_OBJECT (pb, "gp_file_new gpret=%i", gpret);
 
-	gpret = gp_camera_file_get (cam_info->camera, camera_file_path.folder, camera_file_path.name, GP_FILE_TYPE_NORMAL, file, cam_info->context);
-	GST_DEBUG ("gp_camera_file_get gpret=%i", gpret);
+	gpret = gp_camera_file_get (pb->cam_info->camera, camera_file_path.folder, camera_file_path.name, GP_FILE_TYPE_NORMAL, file, pb->cam_info->context);
+	GST_DEBUG_OBJECT (pb, "gp_camera_file_get gpret=%i", gpret);
 	if (gpret < 0)
 		goto fail;
-	gp_file_get_data_and_size (file, (const char**)&(cam_info->data), &(cam_info->size));
+	gp_file_get_data_and_size (file, (const char**)&(pb->cam_info->data), &(pb->cam_info->size));
 	if (gpret < 0)
 		goto fail;
 
-	gpret = gp_camera_file_delete (cam_info->camera, camera_file_path.folder, camera_file_path.name, cam_info->context);
-	GST_DEBUG ("gp_camera_file_delete gpret=%i", gpret);
-// 	gp_file_free(file);
+	if (!priv->cam_keep_files)
+	{
+		gpret = gp_camera_file_delete (pb->cam_info->camera, camera_file_path.folder, camera_file_path.name, pb->cam_info->context);
+		GST_DEBUG_OBJECT (pb, "gp_camera_file_delete gpret=%i", gpret);
+	}
 
-	if (cam_info->size <= 0)
+	if (pb->cam_info->size <= 0)
 		goto fail;
 
-	g_mutex_unlock (&cam_info->mutex);
+	g_mutex_unlock (&pb->cam_info->mutex);
 	return TRUE;
 
 fail:
-	g_mutex_unlock (&cam_info->mutex);
+	g_mutex_unlock (&pb->cam_info->mutex);
 	return FALSE;
 }
 
@@ -1962,7 +2037,7 @@ void photo_booth_copies_value_changed (GtkRange *range, PhotoBoothWindow *win)
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
 	priv->print_copies = (int) gtk_range_get_value (range);
-	GST_DEBUG_OBJECT (range, "\n\nphoto_booth_copies_value_changed value=%d", priv->print_copies);
+	GST_DEBUG_OBJECT (range, "photo_booth_copies_value_changed value=%d", priv->print_copies);
 }
 
 #define ALWAYS_PRINT_DIALOG 1
