@@ -187,12 +187,13 @@ void photo_booth_window_show_cursor (PhotoBoothWindow *win)
 void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 {
 	PhotoBoothWindowPrivate *priv;
+	int i;
 	GST_DEBUG ("photo_booth_window_start_countdown %i", count);
 	priv = photo_booth_window_get_instance_private (win);
 	priv->countdown = count+1;
 	_pbw_tick_countdown(win);
 	gtk_widget_show (GTK_WIDGET (priv->countdown_label));
-	for (int i = 1; i <= count+2; i++)
+	for (i = 1; i <= count+2; i++)
 	{
 		g_timeout_add (1000*i, (GSourceFunc) _pbw_tick_countdown, win);
 		GST_INFO ("added timeout callback at %i", 1000*i);
@@ -202,6 +203,7 @@ void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 void photo_booth_window_set_copies_show (PhotoBoothWindow *win, gint min, gint max, gint def)
 {
 	PhotoBoothWindowPrivate *priv;
+	int x;
 	priv = photo_booth_window_get_instance_private (win);
 	GST_DEBUG ("photo_booth_window_set_copies_limit [%i-%i]", min, max);
 	GtkAdjustment *adj = gtk_range_get_adjustment (GTK_RANGE (priv->copies));
@@ -209,7 +211,7 @@ void photo_booth_window_set_copies_show (PhotoBoothWindow *win, gint min, gint m
 	gtk_adjustment_set_upper (adj, (gdouble) max);
 	priv = photo_booth_window_get_instance_private (win);
 	gtk_range_set_value (GTK_RANGE (priv->copies), (gdouble) def);
-	for (int x = min; x <= max; x++)
+	for (x = min; x <= max; x++)
 	{
 		gtk_scale_add_mark (priv->copies, (gdouble) x, GTK_POS_BOTTOM, NULL);
 	}
