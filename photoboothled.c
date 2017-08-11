@@ -41,8 +41,9 @@ static void photo_booth_led_class_init (PhotoBoothLedClass *klass)
 
 static void photo_booth_led_init (PhotoBoothLed *led)
 {
+	int i;
 	led->fd = -1;
-	for (int i=0; i < 10; i++)
+	for (i=0; i < 10; i++)
 	{
 		gchar *devicename = g_strdup_printf ("%s%d", LED_DEVICENAME, i);
 		GST_DEBUG_OBJECT (led, "trying to open device %s... ", devicename);
