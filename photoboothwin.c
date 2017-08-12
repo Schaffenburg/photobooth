@@ -79,8 +79,8 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_widget_init_template (GTK_WIDGET (win));
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
-	GST_DEBUG_OBJECT (priv->countdown_label, "countdown_label @%p", priv->countdown_label);
-	GST_DEBUG_OBJECT (priv->copies, "copies @%p", priv->copies);
+	GST_TRACE_OBJECT (priv->countdown_label, "countdown_label");
+	GST_TRACE_OBJECT (priv->copies, "copies");
 	GdkScreen *screen = gdk_screen_get_default ();
 	gtk_window_fullscreen_on_monitor (GTK_WINDOW (win), screen, 0);
 	if (G_stylesheet_filename)
@@ -233,7 +233,7 @@ gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, g
 {
 	int intval = (int) value;
 	if (intval == 1)
-		return g_strdup_printf (_("1 print"));
+		return g_strdup (_("1 print"));
 	return g_strdup_printf (_("%d prints"), intval);
 }
 
