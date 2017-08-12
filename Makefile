@@ -1,6 +1,6 @@
 CC ?= gcc
 PKGCONFIG = $(shell which pkg-config)
-CFLAGS = $(shell $(PKGCONFIG) --cflags gtk+-3.0 gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0 libgphoto2 libcurl x11 libcanberra-gtk3 json-glib-1.0) -Wl,--export-dynamic -rdynamic -g
+CFLAGS = $(shell $(PKGCONFIG) --cflags gtk+-3.0 gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0 libgphoto2 libcurl x11 libcanberra-gtk3 json-glib-1.0) -Wall -Wl,--export-dynamic -rdynamic -g
 LIBS = $(shell $(PKGCONFIG) --libs gtk+-3.0 gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0 libgphoto2 gmodule-export-2.0 libcurl x11 libcanberra-gtk3 json-glib-1.0)
 GLIB_COMPILE_RESOURCES = $(shell $(PKGCONFIG) --variable=glib_compile_resources gio-2.0)
 
