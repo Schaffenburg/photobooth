@@ -56,6 +56,7 @@ struct _PhotoBoothPrivate
 
 	guint32            countdown;
 	gint               preview_timeout;
+	gulong             preview_timeout_id;
 	gchar             *overlay_image;
 
 	gchar             *save_path_template;
@@ -81,7 +82,7 @@ struct _PhotoBoothPrivate
 	GstElement        *audio_playbin;
 
 	GstElement        *screensaver_playbin;
-	gboolean          paused_callback_id;
+	gboolean           paused_callback_id;
 
 	gchar             *countdown_audio_uri;
 	gchar             *error_sound;
@@ -247,6 +248,8 @@ static void photo_booth_init (PhotoBooth *pb)
 
 	priv->capture_thread = NULL;
 	priv->countdown = DEFAULT_COUNTDOWN;
+	priv->preview_timeout = 0;
+	priv->preview_timeout_id = 0;
 	priv->preview_fps = PREVIEW_FPS;
 	priv->preview_width = PREVIEW_WIDTH;
 	priv->preview_height = PREVIEW_HEIGHT;
@@ -869,7 +872,8 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		else if (ret == 0 && state == CAPTURE_PRETRIGGER)
 		{
 			gtk_label_set_text (priv->win->status, _("Focussing..."));
-// 			photo_booth_focus (pb->cam_info);
+			if (0)
+				photo_booth_focus (pb->cam_info);
 			if (priv->cam_reeinit_before_snapshot)
 			{
 				photo_booth_cam_close (&pb->cam_info);
@@ -1284,6 +1288,12 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 		priv->sink_block_id = 0;
 		gst_object_unref (pad);
 		gst_element_set_state (pb->video_sink, GST_STATE_PLAYING);
+	}
+	if (priv->preview_timeout_id)
+	{
+		g_source_remove (priv->preview_timeout_id);
+		GST_DEBUG_OBJECT (pb, "removing preview_timeout");
+		priv->preview_timeout_id = 0;
 	}
 	int ret = gst_element_link (pb->video_bin, pb->video_sink);
 	GST_LOG_OBJECT (pb, "linked video-bin ! video-sink ret=%i", ret);
@@ -1782,10 +1792,10 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			if (priv->print_copies_max)
 			{
 				gtk_widget_show (GTK_WIDGET (priv->win->button_print));
-				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			}
+			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			if (priv->preview_timeout > 0)
-				g_timeout_add_seconds (priv->preview_timeout, (GSourceFunc) photo_booth_cancel, pb);
+				priv->preview_timeout_id = g_timeout_add_seconds (priv->preview_timeout, (GSourceFunc) photo_booth_cancel, pb);
 			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
 			break;
@@ -2004,6 +2014,7 @@ void photo_booth_cancel (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
+	GST_INFO_OBJECT (pb, "cancelled in state %s", photo_booth_state_get_name (priv->state));
 	switch (priv->state) {
 		case PB_STATE_PROCESS_PHOTO:
 			photo_booth_process_photo_remove_elements (pb);
@@ -2333,20 +2344,20 @@ static gboolean photo_booth_watchdog_timedout (PhotoBooth *pb)
 const gchar* photo_booth_state_get_name (PhotoboothState state)
 {
 	switch (state) {
-		case PB_STATE_NONE: return "PB_STATE_NONE";break;
-		case PB_STATE_PREVIEW: return "PB_STATE_PREVIEW";break;
-		case PB_STATE_PREVIEW_COOLDOWN: return "PB_STATE_PREVIEW_COOLDOWN";break;
-		case PB_STATE_COUNTDOWN: return "PB_STATE_COUNTDOWN";break;
-		case PB_STATE_TAKING_PHOTO: return "PB_STATE_TAKING_PHOTO";break;
-		case PB_STATE_PROCESS_PHOTO: return "PB_STATE_PROCESS_PHOTO";break;
-		case PB_STATE_ASK_PRINT: return "PB_STATE_ASK_PRINT";break;
-		case PB_STATE_PRINTING: return "PB_STATE_PRINTING";break;
-		case PB_STATE_ASK_UPLOAD: return "PB_STATE_ASK_UPLOAD";break;
-		case PB_STATE_UPLOADING: return "PB_STATE_UPLOADING";break;
-		case PB_STATE_SCREENSAVER: return "PB_STATE_SCREENSAVER";break;
-		default: return "STATE UNKOWN!";break;
+		case PB_STATE_NONE: return "PB_STATE_NONE";
+		case PB_STATE_PREVIEW: return "PB_STATE_PREVIEW";
+		case PB_STATE_PREVIEW_COOLDOWN: return "PB_STATE_PREVIEW_COOLDOWN";
+		case PB_STATE_COUNTDOWN: return "PB_STATE_COUNTDOWN";
+		case PB_STATE_TAKING_PHOTO: return "PB_STATE_TAKING_PHOTO";
+		case PB_STATE_PROCESS_PHOTO: return "PB_STATE_PROCESS_PHOTO";
+		case PB_STATE_ASK_PRINT: return "PB_STATE_ASK_PRINT";
+		case PB_STATE_PRINTING: return "PB_STATE_PRINTING";
+		case PB_STATE_ASK_UPLOAD: return "PB_STATE_ASK_UPLOAD";
+		case PB_STATE_UPLOADING: return "PB_STATE_UPLOADING";
+		case PB_STATE_SCREENSAVER: return "PB_STATE_SCREENSAVER";
+		default: break;
 	}
-	return "";
+	return "STATE UNKOWN!";
 }
 
 PhotoBooth *photo_booth_new (void)
