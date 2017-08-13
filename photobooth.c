@@ -388,25 +388,47 @@ static void photo_booth_dispose (GObject *object)
 }
 
 #define READ_INT_INI_KEY(var, gkf, grp, key) {                                         \
-  GError *err=NULL;                                                                    \
-  int i = g_key_file_get_integer (gkf, grp, key, &err);                                \
+  GError *err = NULL;                                                                  \
+  gint i = g_key_file_get_integer (gkf, grp, key, &err);                               \
   if (!err) {                                                                          \
-    var = i; GST_TRACE ("read ini key [%s]:%s = %d", grp, key, var);                   \
+    var = i; GST_TRACE ("read integer ini key [%s]:%s = %d", grp, key, var);           \
   } else {                                                                             \
-    GST_TRACE ("ini key [%s]:%s not specified. keep default value %d", grp, key, var); \
+    GST_TRACE ("ini key [%s]:%s not present. keep default value %d", grp, key, var);   \
+    g_error_free (err);                                                                \
+  }                                                                                    \
+}
+#define READ_DBL_INI_KEY(var, gkf, grp, key) {                                         \
+  GError *err = NULL;                                                                  \
+  gdouble i = g_key_file_get_double (gkf, grp, key, &err);                             \
+  if (!err) {                                                                          \
+    var = i; GST_TRACE ("read double ini key [%s]:%s = %f", grp, key, var);            \
+  } else {                                                                             \
+    GST_TRACE ("ini key [%s]:%s not present. keep default value %f", grp, key, var);   \
     g_error_free (err);                                                                \
   }                                                                                    \
 }
 #define READ_STR_INI_KEY(var, gkf, grp, key) {                                         \
-  GError *err=NULL;                                                                    \
+  GError *err = NULL;                                                                  \
   gchar *str = g_key_file_get_string (gkf, grp, key, &err);                            \
   if (!err) {                                                                          \
     var = g_strdup(str);                                                               \
-    GST_TRACE ("read ini key [%s]:%s = %s", grp, key, var);                            \
+    GST_TRACE ("read string ini key [%s]:%s = %s", grp, key, var);                     \
     g_free(str);                                                                       \
   } else {                                                                             \
-    GST_TRACE ("ini key [%s]:%s not specified. keep default value %s", grp, key, var); \
-    g_error_free (err);}                                                               \
+    GST_TRACE ("ini key [%s]:%s not present. keep default value %s", grp, key, var);   \
+    g_error_free (err);                                                                \
+  }                                                                                    \
+}
+#define READ_BOOL_INI_KEY(var, gkf, grp, key) {                                        \
+  GError *err = NULL;                                                                  \
+  gboolean b = g_key_file_get_boolean (gkf, grp, key, &err);                           \
+  if (!err) {                                                                          \
+    var = b;                                                                           \
+    GST_TRACE ("read boolean ini key [%s]:%s = %s", grp, key, var ? "TRUE" : "FALSE"); \
+  } else {                                                                             \
+    GST_TRACE ("ini key [%s]:%s not present. keep default value %i", grp, key, var);   \
+    g_error_free (err);                                                                \
+  }                                                                                    \
 }
 
 void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
@@ -520,17 +542,17 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_INT_INI_KEY (priv->print_width, gkf, "printer", "width");
 			READ_INT_INI_KEY (priv->print_height, gkf, "printer", "height");
 			READ_STR_INI_KEY (priv->print_icc_profile, gkf, "printer", "icc_profile");
-			priv->print_x_offset = g_key_file_get_double (gkf, "printer", "offset_x", NULL);
-			priv->print_y_offset = g_key_file_get_double (gkf, "printer", "offset_y", NULL);
+			READ_DBL_INI_KEY (priv->print_x_offset, gkf, "printer", "offset_x");
+			READ_DBL_INI_KEY (priv->print_y_offset, gkf, "printer", "offset_y");
 		}
 		if (g_key_file_has_group (gkf, "camera"))
 		{
 			READ_INT_INI_KEY (priv->preview_fps, gkf, "camera", "preview_fps")
 			READ_INT_INI_KEY (priv->preview_width, gkf, "camera", "preview_width");
 			READ_INT_INI_KEY (priv->preview_height, gkf, "camera", "preview_height");
-			priv->cam_reeinit_before_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_before_snapshot", NULL);
-			priv->cam_reeinit_after_snapshot = g_key_file_get_boolean (gkf, "camera", "cam_reeinit_after_snapshot", NULL);
-			priv->cam_keep_files = g_key_file_get_boolean (gkf, "camera", "cam_keep_files", NULL);
+			READ_BOOL_INI_KEY (priv->cam_reeinit_before_snapshot, gkf, "camera", "cam_reeinit_before_snapshot");
+			READ_BOOL_INI_KEY (priv->cam_reeinit_after_snapshot, gkf, "camera", "cam_reeinit_after_snapshot");
+			READ_BOOL_INI_KEY (priv->cam_keep_files, gkf, "camera", "cam_keep_files");
 		}
 		if (g_key_file_has_group (gkf, "upload"))
 		{
