@@ -102,6 +102,7 @@ struct _PhotoBoothPrivate
 	GMutex             upload_mutex;
 	gboolean           do_twitter;
 	gboolean           do_flip;
+	gboolean           do_facedetect;
 
 	PhotoBoothLed     *led;
 };
@@ -113,6 +114,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
 #define DEFAULT_FLIP TRUE
+#define DEFAULT_FACEDETECT FALSE
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
@@ -285,6 +287,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->upload_thread = NULL;
 	priv->do_twitter = TRUE;
 	priv->do_flip = DEFAULT_FLIP;
+	priv->do_facedetect = DEFAULT_FACEDETECT;
 	priv->state_change_watchdog_timeout_id = 0;
 
 	priv->led = photo_booth_led_new ();
@@ -477,6 +480,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_STR_INI_KEY (priv->overlay_image, gkf, "general", "overlay_image");
 			READ_INT_INI_KEY (priv->screensaver_timeout, gkf, "general", "screensaver_timeout");
 			READ_STR_INI_KEY (screensaverfile, gkf, "general", "screensaver_file");
+			READ_BOOL_INI_KEY (priv->do_facedetect, gkf, "general", "facedetection");
 			if (screensaverfile)
 			{
 				gchar *screensaverabsfilename;
@@ -1001,7 +1005,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *video_bin;
-	GstElement *mjpeg_source, *mjpeg_filter, *mjpeg_parser, *mjpeg_decoder, *video_filter, *video_scale, *video_flip, *video_convert;
+	GstElement *mjpeg_source, *mjpeg_filter, *mjpeg_parser, *mjpeg_decoder, *video_filter, *video_scale, *video_flip, *video_convert, *video_facedetect = NULL;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -1029,6 +1033,9 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (G_OBJECT (video_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
+	if (priv->do_facedetect)
+		video_facedetect = gst_element_factory_make ("facedetect", "video-facedetect");
+
 	if (!(mjpeg_source && mjpeg_filter && mjpeg_parser && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter))
 	{
 		GST_ERROR_OBJECT (video_bin, "Failed to make videobin pipeline element(s):%s%s%s%s%s%s%s%s", mjpeg_source?"":" fdsrc", mjpeg_filter?"":" capsfilter", mjpeg_parser?"":" jpegparse",
@@ -1038,13 +1045,31 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 
 	gst_bin_add_many (GST_BIN (video_bin), mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL);
 
-	if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL))
+	if (video_facedetect)
 	{
-		GST_ERROR_OBJECT (video_bin, "couldn't link videobin elements!");
-		return FALSE;
+		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-videoconvert");
+		gst_bin_add_many (GST_BIN (video_bin), detect_convert, video_facedetect, NULL);
+		g_object_set (G_OBJECT (video_facedetect), "updates", 0, "display", FALSE, NULL);
+		if (gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_facedetect, detect_convert, NULL))
+		{
+			GST_INFO_OBJECT (video_bin, "facedetect plugin will be used!");
+			pad = gst_element_get_static_pad (detect_convert, "src");
+		} else {
+			gst_object_unref (video_facedetect);
+			gst_object_unref (detect_convert);
+			video_facedetect = NULL;
+		}
+	}
+	if (!video_facedetect)
+	{
+		if (!gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, NULL))
+		{
+			GST_ERROR_OBJECT (video_bin, "couldn't link videobin elements!");
+			return FALSE;
+		}
+		pad = gst_element_get_static_pad (video_filter, "src");
 	}
 
-	pad = gst_element_get_static_pad (video_filter, "src");
 	ghost = gst_ghost_pad_new ("src", pad);
 	gst_object_unref (pad);
 	gst_pad_set_active (ghost, TRUE);
@@ -1220,6 +1245,20 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			if (priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_PREVIEW_COOLDOWN)
 			{
 				gtk_widget_show (GTK_WIDGET (priv->win->image));
+			}
+			break;
+		}
+		case GST_MESSAGE_ELEMENT:
+		{
+			const GstStructure *structure;
+			structure = gst_message_get_structure (message);
+			if (structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
+			{
+			  const GValue *faces;
+				faces = gst_structure_get_value (structure, "faces");
+				if (gst_value_list_get_size (faces)) {
+					photo_booth_window_face_detected (priv->win, faces);
+				}
 			}
 			break;
 		}

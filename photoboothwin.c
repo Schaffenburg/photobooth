@@ -30,6 +30,7 @@ struct _PhotoBoothWindowPrivate
 	gint countdown;
 	GtkImage *mask;
 	GtkWidget *mask_event;
+	GdkPixbuf *mask_pixbuf;
 	GtkFixed *fixed;
 	gboolean dragging;
 	gint startoffsetx, startoffsety;
@@ -41,7 +42,10 @@ GST_DEBUG_CATEGORY_STATIC (photo_booth_windows_debug);
 #define GST_CAT_DEFAULT photo_booth_windows_debug
 
 gboolean _pbw_tick_countdown (PhotoBoothWindow *win);
-gboolean _pbw_clock_tick (GtkLabel *status_clock);
+gboolean _pbw_clock_tick     (GtkLabel *status_clock);
+gboolean photo_booth_window_mask_press          (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean photo_booth_window_mask_release        (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean photo_booth_window_mask_motion         (GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
 
 static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 {
@@ -84,6 +88,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 
 static void photo_booth_window_init (PhotoBoothWindow *win)
 {
+	GError *error = NULL;
 	gtk_widget_init_template (GTK_WIDGET (win));
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
@@ -111,6 +116,15 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_widget_set_has_window (GTK_WIDGET (priv->fixed), TRUE);
 	priv->dragging = FALSE;
 	priv->startoffsetx = 0, priv->startoffsety = 0;
+
+// 	priv->mask_pixbuf = gdk_pixbuf_new_from_file_at_scale ("overlays/mask_nasenbrille.png", -1, -1, TRUE, &error);
+	priv->mask_pixbuf = gdk_pixbuf_new_from_file_at_scale ("overlays/mask_fuchsohren.png", -1, -1, FALSE, &error);
+	if (error) {
+		GST_ERROR_OBJECT (win, "%s\n", error->message);
+		return;
+	}
+	GST_DEBUG ("mask size %dx%d", gdk_pixbuf_get_width (priv->mask_pixbuf), gdk_pixbuf_get_height (priv->mask_pixbuf));
+	gtk_image_set_from_pixbuf (priv->mask, priv->mask_pixbuf);
 }
 
 void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkgstwidget)
@@ -247,6 +261,48 @@ gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, g
 	if (intval == 1)
 		return g_strdup (_("1 print"));
 	return g_strdup_printf (_("%d prints"), intval);
+}
+
+void photo_booth_window_face_detected (PhotoBoothWindow *win, const GValue *faces)
+{
+	PhotoBoothWindowPrivate *priv;
+	guint i, size;
+	gchar *contents;
+
+	priv = photo_booth_window_get_instance_private (win);
+	contents = g_strdup_value_contents (faces);
+	GST_INFO ("Detected objects: %s", *(&contents));
+	g_free (contents);
+	size = gst_value_list_get_size (faces);
+	for (i = 0; i < size; i++)
+	{
+		const GValue *face = gst_value_list_get_value (faces, i);
+		const GstStructure *face_struct =
+		gst_value_get_structure (face);
+		if (i == 0)
+		{
+			guint x, y, width, height;
+			gdouble aspect;
+			GdkPixbuf *scaled_mask_pixbuf;
+			gst_structure_get_uint (face_struct, "x", &x);
+			gst_structure_get_uint (face_struct, "y", &y);
+			gst_structure_get_uint (face_struct, "width", &width);
+			gst_structure_get_uint (face_struct, "height", &height);
+			GST_INFO_OBJECT (priv->mask_event, "dimensions: (%dx%d) position: (%d,%d)", width, height, x, y);
+
+			// TODO: magic adjustments, store them in PNG metadata or a config file
+			// x += 150; height *= 0.8; y += 50; // for mask_nasenbrille
+
+			x += 180; y -= 100;
+			aspect = (gdouble) gdk_pixbuf_get_width (priv->mask_pixbuf) / (gdouble) gdk_pixbuf_get_height (priv->mask_pixbuf);
+			height = width / aspect; // for mask_fuchsohren
+
+			gtk_fixed_move (priv->fixed, priv->mask_event, x, y);
+			scaled_mask_pixbuf = gdk_pixbuf_scale_simple (priv->mask_pixbuf, width, height, GDK_INTERP_BILINEAR);
+			GST_DEBUG ("mask original size: %dx%d -> new size: %d %d", gdk_pixbuf_get_width (priv->mask_pixbuf), gdk_pixbuf_get_height (priv->mask_pixbuf), gdk_pixbuf_get_width (scaled_mask_pixbuf), gdk_pixbuf_get_height (scaled_mask_pixbuf));
+			gtk_image_set_from_pixbuf (priv->mask, scaled_mask_pixbuf);
+		}
+	}
 }
 
 gboolean photo_booth_window_mask_press (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
