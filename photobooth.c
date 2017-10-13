@@ -1049,7 +1049,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	{
 		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-videoconvert");
 		gst_bin_add_many (GST_BIN (video_bin), detect_convert, video_facedetect, NULL);
-		g_object_set (G_OBJECT (video_facedetect), "updates", 0, "display", FALSE, NULL);
+		g_object_set (G_OBJECT (video_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
 		if (gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_facedetect, detect_convert, NULL))
 		{
 			GST_INFO_OBJECT (video_bin, "facedetect plugin will be used!");
@@ -1254,11 +1254,9 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			structure = gst_message_get_structure (message);
 			if (structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
 			{
-			  const GValue *faces;
+				const GValue *faces;
 				faces = gst_structure_get_value (structure, "faces");
-				if (gst_value_list_get_size (faces)) {
-					photo_booth_window_face_detected (priv->win, faces);
-				}
+				photo_booth_window_face_detected (priv->win, faces);
 			}
 			break;
 		}
