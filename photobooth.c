@@ -1314,6 +1314,7 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
 	gtk_fixed_move (GTK_FIXED (gtk_widget_get_parent (GTK_WIDGET (priv->win->image))), GTK_WIDGET (priv->win->image), rect.x, 0);
+	g_object_set_data (G_OBJECT (priv->win->image), "screen-offset-y", GINT_TO_POINTER (rect.y));
 
 	return FALSE;
 }
