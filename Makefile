@@ -4,7 +4,7 @@ CFLAGS = $(shell $(PKGCONFIG) --cflags gtk+-3.0 gstreamer-1.0 gstreamer-video-1.
 LIBS = $(shell $(PKGCONFIG) --libs gtk+-3.0 gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0 libgphoto2 gmodule-export-2.0 libcurl x11 libcanberra-gtk3 json-glib-1.0)
 GLIB_COMPILE_RESOURCES = $(shell $(PKGCONFIG) --variable=glib_compile_resources gio-2.0)
 
-SRC = photobooth.c photoboothwin.c focus.c photoboothled.c
+SRC = photobooth.c photoboothwin.c photoboothled.c
 BUILT_SRC = resources.c
 
 OBJS = $(BUILT_SRC:.c=.o) $(SRC:.c=.o)

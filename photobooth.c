@@ -160,7 +160,6 @@ static gboolean photo_booth_capture_paused_cb (PhotoBooth *pb);
 /* libgphoto2 */
 static gboolean photo_booth_cam_init (CameraInfo **cam_info);
 static gboolean photo_booth_cam_close (CameraInfo **cam_info);
-static gboolean photo_booth_focus (CameraInfo *cam_info);
 static gboolean photo_booth_take_photo (PhotoBooth *pb);
 static void photo_booth_flush_pipe (int fd);
 static void photo_booth_capture_thread_func (PhotoBooth *pb);
@@ -893,9 +892,10 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		}
 		else if (ret == 0 && state == CAPTURE_PRETRIGGER)
 		{
+#if 0
 			gtk_label_set_text (priv->win->status, _("Focussing..."));
-			if (0)
-				photo_booth_focus (pb->cam_info);
+			photo_booth_focus (pb->cam_info);
+#endif
 			if (priv->cam_reeinit_before_snapshot)
 			{
 				photo_booth_cam_close (&pb->cam_info);
@@ -1670,6 +1670,9 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
 	return FALSE;
 }
 
+#if 0
+static gboolean photo_booth_focus (CameraInfo *cam_info);
+
 extern int camera_auto_focus (Camera *list, GPContext *context, int onoff);
 
 static gboolean photo_booth_focus (CameraInfo *cam_info)
@@ -1709,6 +1712,7 @@ static gboolean photo_booth_focus (CameraInfo *cam_info)
 	}
 	return TRUE;
 }
+#endif
 
 static gboolean photo_booth_take_photo (PhotoBooth *pb)
 {
