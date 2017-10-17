@@ -138,10 +138,9 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 static void
 _pbw_free_masks (PhotoBoothMask *mask)
 {
-	g_object_unref (mask->widget);
 	g_object_unref (mask->pixbuf);
+	gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (GTK_WIDGET (mask->widget))), mask->widget);
   g_slice_free (PhotoBoothMask, mask);
-	GST_DEBUG ("_unreffing mask");
 }
 
 static void photo_booth_window_dispose (GObject *object)
@@ -150,6 +149,7 @@ static void photo_booth_window_dispose (GObject *object)
 	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (object));
 	g_list_free_full (priv->masks, (GDestroyNotify) _pbw_free_masks);
 	priv->masks = NULL;
+	G_OBJECT_CLASS (photo_booth_window_parent_class)->dispose (object);
 }
 
 void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkgstwidget)
