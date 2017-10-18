@@ -17,7 +17,7 @@
    version="1.1"
    id="svg8511"
    sodipodi:docname="building_a_photobooth.svg"
-   inkscape:version="0.92.1 r"
+   inkscape:version="0.92.2 5c3e80d, 2017-08-06"
    style="enable-background:new"
    enable-background="new">
   <sodipodi:namedview
@@ -27,13 +27,13 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="2.0000002"
-     inkscape:cx="1714.2525"
-     inkscape:cy="3140.3925"
+     inkscape:zoom="1.0000001"
+     inkscape:cx="1558.8825"
+     inkscape:cy="2463.7524"
      inkscape:document-units="mm"
-     inkscape:current-layer="group_software_screen"
+     inkscape:current-layer="group_software_flowchart"
      showgrid="false"
-     showguides="true"
+     showguides="false"
      inkscape:window-width="1920"
      inkscape:window-height="1051"
      inkscape:window-x="1280"
@@ -1151,7 +1151,7 @@
   </g>
   <g
      visibility="hidden"
-     style="display:inline"
+     style="display:inline;visibility:hidden"
      inkscape:label="Software"
      id="layer_software"
      inkscape:groupmode="layer"
@@ -1171,7 +1171,7 @@
        id="text10937"
        y="217.77486"
        x="-499.90317"
-       style="font-size:70.55599976px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';fill:#000000;filter:url(#filter_blur_large);opacity:0.5;"
+       style="font-size:70.55599976px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';opacity:0.5;fill:#000000;filter:url(#filter_blur_large)"
        font-size="70.556">
       <tspan
          y="217.77486"
@@ -1261,9 +1261,9 @@
          id="text376678"
          y="302.453"
          x="446.78845"
-         style="font-size:10.58300018px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:center;text-anchor:middle">
+         style="font-size:10.58300018px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:center;text-anchor:middle">
         <tspan
-           style="-inkscape-font-specification:'Sans, Normal';;text-align:center"
+           style="-inkscape-font-specification:'Sans, Normal';text-align:center"
            y="302.453"
            x="446.78845"
            id="tspan376676">Hardware</tspan>
@@ -1273,9 +1273,9 @@
          id="text376678-8"
          y="280.259"
          x="446.68546"
-         style="font-size:10.58300018px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:center;text-anchor:middle">
+         style="font-size:10.58300018px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:center;text-anchor:middle">
         <tspan
-           style="-inkscape-font-specification:'Sans, Normal';;text-align:center"
+           style="-inkscape-font-specification:'Sans, Normal';text-align:center"
            y="280.259"
            x="446.68546"
            id="tspan376676-7">Linux</tspan>
@@ -1285,10 +1285,10 @@
          id="text376678-8-1"
          y="215.09801"
          x="446.82745"
-         style="font-size:10.58300018px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:center;text-anchor:middle">
+         style="font-size:10.58300018px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:center;text-anchor:middle">
         <tspan
            id="tspan376738"
-           style="-inkscape-font-specification:'Sans, Normal';;text-align:center"
+           style="-inkscape-font-specification:'Sans, Normal';text-align:center"
            y="215.09801"
            x="446.82745">photobooth application</tspan>
       </text>
@@ -1319,7 +1319,7 @@
          id="text9092-7-5"
          y="239.381"
          x="492.32629"
-         style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:1.05801582px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:start;writing-mode:lr-tb;text-anchor:start">
+         style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:1.05801582px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:start;writing-mode:lr-tb;text-anchor:start">
         <tspan
            sodipodi:role="line"
            id="tspan376907"
@@ -1328,74 +1328,65 @@
         <tspan
            sodipodi:role="line"
            id="tspan376915"
-           y="240.70351"
-           x="492.32629"
-           >creating graphical user interfaces</tspan>
+           y="240.70352"
+           x="492.32629">creating graphical user interfaces</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376911"
-           y="242.026"
-           x="492.32629"
-           >◦ created 1996 for GIMP</tspan>
+           y="242.02603"
+           x="492.32629">◦ created 1996 for GIMP</tspan>
         <tspan
            sodipodi:role="line"
-           y="243.34851"
+           y="243.34856"
            x="492.32629"
            id="tspan6375" />
         <tspan
            sodipodi:role="line"
            id="tspan376895"
            style="font-weight:bold"
-           y="244.67101"
+           y="244.67108"
            x="492.32629">GLib</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376897"
-           y="245.99352"
-           x="492.32629"
-           >◦ low-level core library</tspan>
+           y="245.99359"
+           x="492.32629">◦ low-level core library</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376899"
-           y="247.31601"
-           x="492.32629"
-           >◦ data structures and handling for C</tspan>
+           y="247.31612"
+           x="492.32629">◦ data structures and handling for C</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376901"
-           y="248.63852"
-           x="492.32629"
-           >◦ GObject system</tspan>
+           y="248.63864"
+           x="492.32629">◦ GObject system</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376903"
-           y="249.96103"
-           x="492.32629"
-           >◦ event-driven programming</tspan>
+           y="249.96115"
+           x="492.32629">◦ event-driven programming</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376905"
-           y="251.28352"
-           x="492.32629"
-           >◦ threads</tspan>
+           y="251.28368"
+           x="492.32629">◦ threads</tspan>
         <tspan
            sodipodi:role="line"
-           y="252.60603"
+           y="252.6062"
            x="492.32629"
-           id="tspan6377"
-            />
+           id="tspan6377" />
         <tspan
            sodipodi:role="line"
            id="tspan376883"
-           style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:1.05801582px;font-family:Sans;-inkscape-font-specification:'Sans, Bold';;text-align:start;writing-mode:lr-tb;text-anchor:start"
-           y="253.92853"
+           style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:1.05801582px;font-family:Sans;-inkscape-font-specification:'Sans, Bold';text-align:start;writing-mode:lr-tb;text-anchor:start"
+           y="253.92871"
            x="492.32629">GTK Widget Toolkit</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan376885"
-           y="255.25104"
-           x="492.32629"
-           >◦ Glade GUI builder</tspan>
+           y="255.25124"
+           x="492.32629">◦ Glade GUI builder</tspan>
       </text>
       <text
          font-size="5.644"
@@ -1413,62 +1404,55 @@
          id="text9092-7-5-1"
          y="239.381"
          x="431.2084"
-         style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:1.05801582px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:start;writing-mode:lr;text-anchor:start;font-weight:normal;">
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:1.05801582px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:start;writing-mode:lr-tb;text-anchor:start">
         <tspan
            sodipodi:role="line"
            id="tspan376889-5"
            y="239.381"
            x="431.2084"
-           style="-inkscape-font-specification:'Sans, Normal';font-family:Sans;font-weight:normal;font-style:normal;font-stretch:normal;font-variant:normal;font-size:1.05801582px;text-anchor:start;text-align:start;writing-mode:lr;">◦ multimedia framework</tspan>
+           style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:1.05801582px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:start;writing-mode:lr-tb;text-anchor:start">◦ multimedia framework</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan377172"
-           y="240.70351"
-           x="431.2084"
-           >◦ pipeline-based</tspan>
+           y="240.70352"
+           x="431.2084">◦ pipeline-based</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan377174"
-           y="242.026"
-           x="431.2084"
-           >◦ media-agnostic</tspan>
+           y="242.02603"
+           x="431.2084">◦ media-agnostic</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan377176"
-           y="243.34851"
-           x="431.2084"
-           >◦ countless plugins</tspan>
+           y="243.34856"
+           x="431.2084">◦ countless plugins</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan377178"
-           y="244.67102"
-           x="431.2084"
-           >◦ it's super cool, you should use it!</tspan>
+           y="244.67108"
+           x="431.2084">◦ it's super cool, you should use it!</tspan>
         <tspan
            sodipodi:role="line"
-           y="245.99352"
+           y="245.99359"
            x="431.2084"
-           id="tspan6373"
-            />
+           id="tspan6373" />
         <tspan
            sodipodi:role="line"
            id="tspan377184"
-           y="247.31601"
-           x="431.2084"
-           >$ gphoto2 --capture-movie --stdout | \</tspan>
+           y="247.31612"
+           x="431.2084">$ gphoto2 --capture-movie --stdout | \</tspan>
         <tspan
            sodipodi:role="line"
            id="tspan377182"
-           y="248.63852"
-           x="431.2084"
-           >gst-launch-1.0 fdsrc ! decodebin ! autovideosink</tspan>
+           y="248.63864"
+           x="431.2084">gst-launch-1.0 fdsrc ! decodebin ! autovideosink</tspan>
       </text>
       <text
          font-size="1.058"
          id="text9092-7-5-1-0"
          y="239.381"
          x="369.48361"
-         style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:1.05801582px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:start;writing-mode:lr-tb;text-anchor:start">
+         style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:1.05801582px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:start;writing-mode:lr-tb;text-anchor:start">
         <tspan
            sodipodi:role="line"
            id="tspan6357"
@@ -1514,12 +1498,12 @@
          id="text6150"
          y="176.60815"
          x="362.57062"
-         style="font-size:14.11100006px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;letter-spacing:0;word-spacing:0;fill:#808080;filter:url(#filter_blur_large)"
+         style="font-size:14.11100006px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';letter-spacing:0;word-spacing:0;fill:#808080;filter:url(#filter_blur_large)"
          font-size="14.111"
          letter-spacing="0"
          word-spacing="0">
         <tspan
-           style="-inkscape-font-specification:'Sans, Normal';;fill:#808080;"
+           style="-inkscape-font-specification:'Sans, Normal';fill:#808080"
            y="176.60815"
            x="362.57062"
            id="tspan6148">Software Architecture</tspan>
@@ -1528,7 +1512,7 @@
          word-spacing="0"
          letter-spacing="0"
          font-size="14.111"
-         style="font-size:14.11100006px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;letter-spacing:0;word-spacing:0;fill:#ffffff"
+         style="font-size:14.11100006px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';letter-spacing:0;word-spacing:0;fill:#ffffff"
          x="362.04144"
          y="176.07899"
          id="text34837">
@@ -1536,7 +1520,7 @@
            id="tspan34835"
            x="362.04144"
            y="176.07899"
-           style="-inkscape-font-specification:'Sans, Normal';">Software Architecture</tspan>
+           style="-inkscape-font-specification:'Sans, Normal'">Software Architecture</tspan>
       </text>
     </g>
     <g
@@ -4519,7 +4503,7 @@
            x="771.28998"
            id="text69902">ANY</text>
         <text
-           style="font-size:104.72100067px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;fill:#4d4d4d;stroke-width:18.5529995;enable-background:new;filter:url(#filter_blur_large);opacity:0.6;"
+           style="font-size:104.72100067px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';opacity:0.6;fill:#4d4d4d;stroke-width:18.5529995;filter:url(#filter_blur_large);enable-background:new"
            x="700.99213"
            y="-2.213721"
            id="text10889"
@@ -4528,16 +4512,16 @@
              id="tspan10887"
              x="700.99213"
              y="-2.213721"
-             style="-inkscape-font-specification:'Sans, Normal';;fill:#4d4d4d;">gstreamer pipelines</tspan>
+             style="-inkscape-font-specification:'Sans, Normal';fill:#4d4d4d">gstreamer pipelines</tspan>
         </text>
         <text
            font-size="104.721"
            id="text15884"
            y="-5.1760001"
            x="697.073"
-           style="font-size:104.72100067px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;enable-background:new">
+           style="font-size:104.72100067px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';enable-background:new">
           <tspan
-             style="-inkscape-font-specification:'Sans, Normal';"
+             style="-inkscape-font-specification:'Sans, Normal'"
              y="-5.1760001"
              x="697.073"
              id="tspan15900">gstreamer pipelines</tspan>
@@ -4609,7 +4593,7 @@
          font-size="2.12"
          y="415.819"
          x="334.28699"
-         style="font-size:2.11999989px;line-height:800%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;text-align:center;text-anchor:middle"
+         style="font-size:2.11999989px;line-height:800%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';text-align:center;text-anchor:middle"
          id="text_software_ux">
         <tspan
            sodipodi:role="line"
@@ -4711,35 +4695,35 @@
          d="m 334.262,425.21 1.006,-1.57 h -1.99 z"
          id="path9422" />
       <image
-         sodipodi:absref="pb_screenshot_countdown.png"
+         sodipodi:absref="/net/code/microcontroller/photobooth/presentation/pb_screenshot_countdown.png"
          xlink:href="pb_screenshot_countdown.png"
-         style="enable-background:new"
-         width="43.174999"
-         height="34.540001"
-         preserveAspectRatio="none"
+         y="405.30701"
+         x="347.57501"
          id="image53754"
-         x="347.57501"
-         y="405.30701" />
+         preserveAspectRatio="none"
+         height="34.540001"
+         width="43.174999"
+         style="enable-background:new" />
       <image
-         sodipodi:absref="pb_screenshot_ask_print.png"
+         sodipodi:absref="/net/code/microcontroller/photobooth/presentation/pb_screenshot_ask_print.png"
          xlink:href="pb_screenshot_ask_print.png"
-         style="enable-background:new"
-         width="43.174999"
-         height="34.540001"
-         preserveAspectRatio="none"
+         y="440.24399"
+         x="347.57501"
          id="image53743"
-         x="347.57501"
-         y="440.24399" />
-      <image
-         sodipodi:absref="pb_screenshot_upload.png"
-         xlink:href="pb_screenshot_upload.png"
-         style="enable-background:new"
-         width="43.174999"
-         height="34.540001"
          preserveAspectRatio="none"
-         id="image53765"
+         height="34.540001"
+         width="43.174999"
+         style="enable-background:new" />
+      <image
+         sodipodi:absref="/net/code/microcontroller/photobooth/presentation/pb_screenshot_upload.png"
+         xlink:href="pb_screenshot_upload.png"
+         y="475.18201"
          x="347.57501"
-         y="475.18201" />
+         id="image53765"
+         preserveAspectRatio="none"
+         height="34.540001"
+         width="43.174999"
+         style="enable-background:new" />
       <path
          style="fill:none;stroke:#000000;stroke-width:0.148;stroke-dashoffset:23"
          inkscape:connector-curvature="0"
@@ -4947,11 +4931,11 @@
       <text
          y="401.03665"
          x="318.50906"
-         style="font-size:4.47755098px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;filter:url(#filter_blur_mid);fill:#4d4d4d;"
+         style="font-size:4.47755098px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';fill:#4d4d4d;filter:url(#filter_blur_mid)"
          id="text8675"
          font-size="4.24">
         <tspan
-           style="font-size:4.47755098px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;fill:#4d4d4d;"
+           style="font-size:4.47755098px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';fill:#4d4d4d"
            x="318.50906"
            y="401.03665"
            id="tspan8673">photobooth user interface software (simplified)</tspan>
@@ -4959,14 +4943,14 @@
       <text
          font-size="4.24"
          id="text6385"
-         style="font-size:4.47755098px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';"
+         style="font-size:4.47755098px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal'"
          x="318.30884"
          y="400.83685">
         <tspan
            id="tspan6383"
            y="400.83685"
            x="318.30884"
-           style="font-size:4.47755098px;font-family:Sans;-inkscape-font-specification:'Sans, Normal';">photobooth user interface software (simplified)</tspan>
+           style="font-size:4.47755098px;font-family:Sans;-inkscape-font-specification:'Sans, Normal'">photobooth user interface software (simplified)</tspan>
       </text>
     </g>
     <path
@@ -5041,18 +5025,18 @@
       <text
          font-size=".652"
          y="434.95898"
-         x="477.11792"
+         x="474.9039"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text8766">
         <tspan
            sodipodi:role="line"
-           x="477.11789"
+           x="474.9039"
            y="434.95898"
            id="tspan8762">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="476.95209"
-           y="435.73273"
+           x="474.9039"
+           y="435.83386"
            id="tspan8764">snapshot_start</tspan>
       </text>
       <path
@@ -5159,13 +5143,13 @@
          id="text8820">
         <tspan
            sodipodi:role="line"
-           x="512.74921"
+           x="512.74933"
            y="424.19241"
            id="tspan8816">gp_camera_</tspan>
         <tspan
            sodipodi:role="line"
-           x="512.12646"
-           y="424.96719"
+           x="512.74933"
+           y="425.06729"
            id="tspan8818">capture_preview</tspan>
       </text>
       <path
@@ -5198,13 +5182,13 @@
          id="text8838">
         <tspan
            sodipodi:role="line"
-           x="516.17651"
+           x="516.17596"
            y="428.28369"
            id="tspan8834">writes preview JPEG</tspan>
         <tspan
            sodipodi:role="line"
-           x="517.39276"
-           y="429.05737"
+           x="516.17596"
+           y="429.15857"
            id="tspan8836">to MOVIEPIPE</tspan>
       </text>
       <path
@@ -5216,18 +5200,18 @@
       <text
          font-size=".652"
          y="430.37064"
-         x="531.59979"
+         x="530.88373"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT"
          id="text8848">
         <tspan
            sodipodi:role="line"
-           x="531.59961"
+           x="530.88373"
            y="430.37064"
            id="tspan8844">fdsrc</tspan>
         <tspan
            sodipodi:role="line"
-           x="530.88098"
-           y="431.12955"
+           x="530.88373"
+           y="431.24551"
            id="tspan8846">video_bin</tspan>
       </text>
       <path
@@ -5307,18 +5291,18 @@
       <text
          font-size=".652"
          y="438.38672"
-         x="477.13171"
+         x="474.9039"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text8890">
         <tspan
            sodipodi:role="line"
-           x="477.1315"
+           x="474.9039"
            y="438.38672"
            id="tspan8886-7">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="476.45459"
-           y="439.16046"
+           x="474.9039"
+           y="439.2616"
            id="tspan8888-4">snapshot_prepare</tspan>
       </text>
       <path
@@ -5330,18 +5314,18 @@
       <text
          font-size=".652"
          y="441.841"
-         x="477.13171"
+         x="474.9039"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text8900">
         <tspan
            sodipodi:role="line"
-           x="477.1315"
+           x="474.9039"
            y="441.841"
            id="tspan8896">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="476.66214"
-           y="442.60092"
+           x="474.9039"
+           y="442.71588"
            id="tspan8898">snapshot_trigger</tspan>
       </text>
       <path
@@ -5437,34 +5421,34 @@
          d="m 514.6532,450.38703 h -5.76166 v -4.93281 h 11.53923 v 4.93281 z" />
       <text
          font-size=".652"
-         y="446.64236"
-         x="510.61969"
+         y="446.36172"
+         x="510.52615"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text8956">
         <tspan
            sodipodi:role="line"
-           x="510.62"
-           y="446.64236"
+           x="510.52615"
+           y="446.36172"
            id="tspan8946">(photo_booth_take_photo)</tspan>
         <tspan
            sodipodi:role="line"
-           x="511.58835"
-           y="447.40231"
+           x="510.52615"
+           y="447.2366"
            id="tspan8948">gp_camera_capture</tspan>
         <tspan
            sodipodi:role="line"
-           x="511.62885"
-           y="448.17609"
+           x="510.52615"
+           y="448.11148"
            id="tspan8950">gp_camera_file_get</tspan>
         <tspan
            sodipodi:role="line"
-           x="510.55118"
-           y="448.936"
+           x="510.52615"
+           y="448.98636"
            id="tspan8952">gp_file_get_data_and_size</tspan>
         <tspan
            sodipodi:role="line"
-           x="511.173"
-           y="449.69598"
+           x="510.52615"
+           y="449.86124"
            id="tspan8954">gp_camera_file_delete</tspan>
       </text>
       <path
@@ -5481,18 +5465,18 @@
          id="text8976">
         <tspan
            sodipodi:role="line"
-           x="527.28766"
+           x="527.28809"
            y="455.92929"
            id="tspan8970">photo_booth_catch_photo_buffer</tspan>
         <tspan
            sodipodi:role="line"
-           x="528.11688"
-           y="457.46405"
+           x="527.28809"
+           y="456.80417"
            id="tspan8972">showprint&amp;cancelbuttons</tspan>
         <tspan
            sodipodi:role="line"
-           x="529.52625"
-           y="458.22296"
+           x="527.28809"
+           y="457.67905"
            id="tspan8974">show copies slider</tspan>
       </text>
       <path
@@ -5521,18 +5505,18 @@
       <text
          font-size=".652"
          y="465.42398"
-         x="477.11792"
+         x="474.05045"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text8994">
         <tspan
            sodipodi:role="line"
-           x="477.11789"
+           x="474.05045"
            y="465.42398"
            id="tspan8990">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="474.02225"
-           y="466.18289"
+           x="474.05045"
+           y="466.29886"
            id="tspan8992">process_photo_remove_elements</tspan>
       </text>
       <path
@@ -5544,28 +5528,28 @@
       <text
          font-size=".652"
          y="389.96661"
-         x="478.25204"
+         x="474.05045"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text9008">
         <tspan
            sodipodi:role="line"
-           x="478.25171"
+           x="474.05045"
            y="389.96661"
            id="tspan9000">main()</tspan>
         <tspan
            sodipodi:role="line"
-           x="476.49634"
-           y="390.72766"
+           x="474.05045"
+           y="390.84149"
            id="tspan9002">photo_booth_new</tspan>
         <tspan
            sodipodi:role="line"
-           x="475.08618"
-           y="391.50143"
+           x="474.05045"
+           y="391.71637"
            id="tspan9004">photo_booth_load_settings</tspan>
         <tspan
            sodipodi:role="line"
-           x="475.70889"
-           y="392.26132"
+           x="474.05045"
+           y="392.59125"
            id="tspan9006">photo_booth_class_init</tspan>
       </text>
       <path
@@ -5577,18 +5561,18 @@
       <text
          font-size=".652"
          y="395.50626"
-         x="475.72202"
+         x="474.05045"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text9018">
         <tspan
            sodipodi:role="line"
-           x="475.72241"
+           x="474.05045"
            y="395.50626"
            id="tspan9014">photo_booth_activate /</tspan>
         <tspan
            sodipodi:role="line"
-           x="476.35754"
-           y="396.26624"
+           x="474.05045"
+           y="396.38113"
            id="tspan9016">photo_booth_open</tspan>
       </text>
       <path
@@ -5707,13 +5691,13 @@
          id="text9076">
         <tspan
            sodipodi:role="line"
-           x="528.5592"
+           x="528.55896"
            y="413.41315"
            id="tspan9072">set capsfilter dimensions</tspan>
         <tspan
            sodipodi:role="line"
-           x="527.89581"
-           y="414.17307"
+           x="528.55896"
+           y="414.28802"
            id="tspan9074">set video-overlay dimensions</tspan>
       </text>
       <path
@@ -5998,19 +5982,19 @@
          id="path9218" />
       <text
          font-size=".652"
-         y="456.35855"
+         y="456.59241"
          x="499.46524"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#3465a4"
          id="text9224">
         <tspan
            sodipodi:role="line"
-           x="499.46487"
-           y="456.35855"
+           x="499.46524"
+           y="456.59241"
            id="tspan9220">gst_pad_add_probe</tspan>
         <tspan
            sodipodi:role="line"
-           x="495.72034"
-           y="461.45779"
+           x="499.46524"
+           y="457.46729"
            id="tspan9222">g_signal_connect (appsink, &quot;new-sample&quot;...)</tspan>
       </text>
       <text
@@ -6033,13 +6017,13 @@
          id="text9234">
         <tspan
            sodipodi:role="line"
-           x="490.95166"
+           x="490.95187"
            y="429.00226"
            id="tspan9230">poll timeout</tspan>
         <tspan
            sodipodi:role="line"
-           x="490.26117"
-           y="429.776"
+           x="490.95187"
+           y="429.87714"
            id="tspan9232">with preview fps</tspan>
       </text>
       <path
@@ -6090,18 +6074,18 @@
       <text
          font-size=".652"
          y="431.43481"
-         x="477.11792"
+         x="474.87994"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text9270">
         <tspan
            sodipodi:role="line"
-           x="477.11789"
+           x="474.87994"
            y="431.43481"
            id="tspan9266">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="476.17819"
-           y="432.20853"
+           x="474.87994"
+           y="432.30969"
            id="tspan9268">background_clicked</tspan>
       </text>
       <path
@@ -6141,18 +6125,18 @@
       <text
          font-size=".652"
          y="487.5921"
-         x="477.11792"
+         x="475.83618"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text9296">
         <tspan
            sodipodi:role="line"
-           x="477.11789"
+           x="475.83618"
            y="487.5921"
            id="tspan9292">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="475.83301"
-           y="488.36588"
+           x="475.83618"
+           y="488.46698"
            id="tspan9294">button_cancel_clicked</tspan>
       </text>
       <path
@@ -6295,18 +6279,18 @@
       <text
          font-size=".652"
          y="447.78918"
-         x="531.22675"
+         x="530.836"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT"
          id="text9386">
         <tspan
            sodipodi:role="line"
-           x="531.22632"
+           x="530.836"
            y="447.78918"
            id="tspan9382">appsrc</tspan>
         <tspan
            sodipodi:role="line"
-           x="530.85303"
-           y="448.54916"
+           x="530.836"
+           y="448.66406"
            id="tspan9384">photo_bin</tspan>
       </text>
       <path
@@ -6429,18 +6413,18 @@
       <text
          font-size=".652"
          y="461.78848"
-         x="477.11792"
+         x="474.05045"
          style="font-size:0.69106126px;font-family:Arial;-inkscape-font-specification:ArialMT;fill:#ffffff"
          id="text9462">
         <tspan
            sodipodi:role="line"
-           x="477.11789"
+           x="474.05045"
            y="461.78848"
            id="tspan9458">photo_booth_</tspan>
         <tspan
            sodipodi:role="line"
-           x="474.53329"
-           y="462.54947"
+           x="474.05045"
+           y="462.66336"
            id="tspan9460">process_photo_plug_elements</tspan>
       </text>
       <path
@@ -6650,28 +6634,28 @@
          id="text6409"
          y="409.49863"
          x="543.9856"
-         style="font-size:4.7240181px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;stroke-width:0.83732885;enable-background:new;filter:url(#filter_blur_mid);fill:#4d4d4d;"
+         style="font-size:4.7240181px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';fill:#4d4d4d;stroke-width:0.83732885;filter:url(#filter_blur_mid);enable-background:new"
          font-size="4.457">
         <tspan
-           style="stroke-width:0.83732885;fill:#4d4d4d;"
+           style="fill:#4d4d4d;stroke-width:0.83732885"
            id="tspan6401"
            y="409.49863"
            x="543.9856"
            sodipodi:role="line">photobooth</tspan>
         <tspan
-           style="stroke-width:0.83732885;fill:#4d4d4d;"
+           style="fill:#4d4d4d;stroke-width:0.83732885"
            id="tspan6403"
            y="415.40366"
            x="543.9856"
            sodipodi:role="line">software</tspan>
         <tspan
-           style="stroke-width:0.83732885;fill:#4d4d4d;"
+           style="fill:#4d4d4d;stroke-width:0.83732885"
            id="tspan6405"
            y="421.30869"
            x="543.9856"
            sodipodi:role="line">flowchart</tspan>
         <tspan
-           style="stroke-width:0.83732885;fill:#4d4d4d;"
+           style="fill:#4d4d4d;stroke-width:0.83732885"
            id="tspan6407"
            y="427.21368"
            x="543.9856"
@@ -6679,7 +6663,7 @@
       </text>
       <text
          font-size="4.457"
-         style="font-size:4.7240181px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;stroke-width:0.83732885;enable-background:new"
+         style="font-size:4.7240181px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';stroke-width:0.83732885;enable-background:new"
          x="543.78564"
          y="409.29855"
          id="text18629">
@@ -6899,14 +6883,14 @@
        id="layer_hardware_components"
        transform="matrix(1.53047,0,0,1.53047,1290.444,-119.618)">
       <image
-         sodipodi:absref="kamera.png"
+         sodipodi:absref="/net/code/microcontroller/photobooth/presentation/kamera.png"
          xlink:href="kamera.png"
-         y="83.436996"
-         x="323.35699"
-         id="image4869"
-         preserveAspectRatio="none"
+         width="75.901001"
          height="59.144001"
-         width="75.901001" />
+         preserveAspectRatio="none"
+         id="image4869"
+         x="323.35699"
+         y="83.436996" />
       <g
          id="layer_x5F_inside"
          transform="translate(0,-6.915)">
@@ -8124,6 +8108,7 @@
    style="fill:#000080;fill-opacity:1"
    id="tspan123796">Arduino Uno</tspan>
 
+
  controls</tspan>
         <tspan
            id="tspan123798"
@@ -8683,16 +8668,16 @@
      id="layer_frames"
      transform="translate(0 59.267)">
     <image
-       sodipodi:absref="Shut-up-and-take-my-money.jpg"
+       sodipodi:absref="/net/code/microcontroller/photobooth/presentation/Shut-up-and-take-my-money.jpg"
        xlink:href="Shut-up-and-take-my-money.jpg"
-       y="432.84201"
-       x="1147.83"
-       id="image_fry"
-       preserveAspectRatio="none"
-       height="158.75"
-       width="287.39301"
+       style="display:inline"
        visibility="hidden"
-       style="display:inline" />
+       width="287.39301"
+       height="158.75"
+       preserveAspectRatio="none"
+       id="image_fry"
+       x="1147.83"
+       y="432.84201" />
     <text
        style="font-size:14.11100006px;line-height:125%;font-family:Sans;-inkscape-font-specification:'Sans, Normal';;filter:url(#filter_blur_large);enable-background:new;fill:#4d4d4d;"
        x="1206.1152"
@@ -8826,7 +8811,7 @@
              d="m 2792.484,1191.312 c 29.313,-7.414 45.471,75.174 11.98,85.071 -48.239,14.255 -42.852,-77.263 -11.98,-85.071 z m 3.406,-1.815 c -28.637,0.3 -42.445,85.713 -0.664,88.888 45.416,3.45 29.301,-89.188 0.664,-88.888 z" />
         </g>
         <text
-             style="font-family:Sans;text-align:center;text-anchor:middle"
+           style="font-family:Sans;text-align:center;text-anchor:middle"
            x="2801.168"
            y="1178.614"
            id="text5023">
@@ -9282,6 +9267,7 @@
          id="tspan11592"><tspan
    text-decoration="line-through"
    id="tspan11598">retail price</tspan>
+
 
 
 
