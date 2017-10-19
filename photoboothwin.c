@@ -291,25 +291,26 @@ gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, g
 void photo_booth_window_face_detected (PhotoBoothWindow *win, const GValue *faces)
 {
 	PhotoBoothWindowPrivate *priv;
-	guint i, n_masks, n_faces;
+	guint i, n_masks, n_faces = 0;
 	gchar *contents;
 	GList *masks;
 	GValue off = G_VALUE_INIT;
 	gint screen_offset_x, screen_offset_y;
 
 	priv = photo_booth_window_get_instance_private (win);
-	contents = g_strdup_value_contents (faces);
-
-	n_faces = gst_value_list_get_size (faces);
 	n_masks = g_list_length (priv->masks);
 	
-	g_value_init (&off, G_TYPE_INT);
-	gtk_container_child_get_property (GTK_CONTAINER (priv->fixed), GTK_WIDGET (win->image), "x", &off);
-	screen_offset_x = g_value_get_int (&off);
-	screen_offset_y = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (win->image), "screen-offset-y"));
-
-	GST_TRACE ("Detected objects: %s face=%i masks=%i screen_offset=(%d, %d)", *(&contents), n_faces, n_masks, screen_offset_x, screen_offset_y);
-	g_free (contents);
+	if (faces)
+	{
+		contents = g_strdup_value_contents (faces);
+		n_faces = gst_value_list_get_size (faces);
+		g_value_init (&off, G_TYPE_INT);
+		gtk_container_child_get_property (GTK_CONTAINER (priv->fixed), GTK_WIDGET (win->image), "x", &off);
+		screen_offset_x = g_value_get_int (&off);
+		screen_offset_y = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (win->image), "screen-offset-y"));
+		GST_TRACE ("Detected objects: %s face=%i masks=%i screen_offset=(%d, %d)", *(&contents), n_faces, n_masks, screen_offset_x, screen_offset_y);
+		g_free (contents);
+	}
 
 	for (i = 0; i < n_masks; i++)
 	{

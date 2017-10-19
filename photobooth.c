@@ -1174,6 +1174,17 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	return TRUE;
 }
 
+static void photo_booth_faces_detected (GstStructure * structure)
+{
+	PhotoBooth *pb;
+	PhotoBoothPrivate *priv;
+	const GValue *faces;
+	gst_structure_get (structure, "pb", G_TYPE_POINTER, &pb, NULL);
+	priv = photo_booth_get_instance_private (pb);
+	faces = gst_structure_get_value (structure, "faces");
+	photo_booth_window_face_detected (priv->win, faces);
+}
+
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb)
 {
 	GstObject *src = GST_MESSAGE_SRC (message);
@@ -1252,17 +1263,17 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		{
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
-			if (structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
+			if (priv->state == PB_STATE_PREVIEW && structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
 			{
-				const GValue *faces;
-				faces = gst_structure_get_value (structure, "faces");
-				photo_booth_window_face_detected (priv->win, faces);
+				GstStructure *new_s = gst_structure_copy (structure);
+				gst_structure_set (new_s, "pb", G_TYPE_POINTER, pb, NULL);
+				g_main_context_invoke_full (NULL, 0, (GSourceFunc) photo_booth_faces_detected, new_s, (GDestroyNotify) gst_structure_free);
 			}
 			break;
 		}
 		default:
 		{
-			GST_TRACE ("gst_message from %" GST_PTR_FORMAT ": %" GST_PTR_FORMAT "", GST_MESSAGE_SRC(message), message);
+			GST_TRACE ("gst_message from %" GST_PTR_FORMAT ": %" GST_PTR_FORMAT "", GST_MESSAGE_SRC (message), message);
 		}
 	}
 	return TRUE;
@@ -1653,6 +1664,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
+	photo_booth_window_face_detected (priv->win, NULL);
 
 	if (priv->countdown > 1)
 	{
