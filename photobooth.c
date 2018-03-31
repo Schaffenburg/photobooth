@@ -37,6 +37,7 @@
 #include "photoboothwin.h"
 #include "photoboothled.h"
 
+#include <gio/gio.h>
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
 
@@ -72,7 +73,7 @@ struct _PhotoBoothPrivate
 	GstBuffer         *print_buffer;
 	GtkPrintSettings  *printer_settings;
 	GMutex             processing_mutex;
-	
+
 	gint               preview_fps, preview_width, preview_height;
 	gboolean           cam_reeinit_before_snapshot, cam_reeinit_after_snapshot;
 	gboolean           cam_keep_files;
@@ -100,7 +101,8 @@ struct _PhotoBoothPrivate
 	gchar             *imgur_description;
 	GThread           *upload_thread;
 	GMutex             upload_mutex;
-	gboolean           do_twitter;
+	gchar             *twitter_bridge_host;
+	guint              twitter_bridge_port;
 	gboolean           do_flip;
 	gboolean           do_facedetect;
 
@@ -122,6 +124,8 @@ struct _PhotoBoothPrivate
 #define PREVIEW_HEIGHT 424
 #define PT_PER_IN 72
 #define IMGUR_UPLOAD_URI "https://api.imgur.com/3/upload"
+#define DEFAULT_TWITTER_BRIDGE_HOST NULL
+#define DEFAULT_TWITTER_BRIDGE_PORT 0
 
 typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 
@@ -285,7 +289,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->imgur_access_token = NULL;
 	priv->imgur_description = NULL;
 	priv->upload_thread = NULL;
-	priv->do_twitter = TRUE;
+	priv->twitter_bridge_host = g_strdup (DEFAULT_TWITTER_BRIDGE_HOST);
+	priv->twitter_bridge_port = DEFAULT_TWITTER_BRIDGE_PORT;
 	priv->do_flip = DEFAULT_FLIP;
 	priv->do_facedetect = DEFAULT_FACEDETECT;
 	priv->state_change_watchdog_timeout_id = 0;
@@ -381,6 +386,7 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->imgur_album_id);
 	g_free (priv->imgur_access_token);
 	g_free (priv->imgur_description);
+  g_free (priv->twitter_bridge_host);
 	g_hash_table_destroy (G_strings_table);
 	G_strings_table = NULL;
 	g_mutex_clear (&priv->processing_mutex);
@@ -444,7 +450,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 	gchar *key;
 	gchar *value;
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	
+
 	GST_DEBUG_OBJECT (pb, "loading settings from file %s", filename);
 
 	gkf = g_key_file_new();
@@ -565,6 +571,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_STR_INI_KEY (priv->imgur_access_token, gkf, "upload", "imgur_access_token");
 			READ_STR_INI_KEY (priv->imgur_description, gkf, "upload", "imgur_description");
 			READ_INT_INI_KEY (priv->upload_timeout, gkf, "upload", "upload_timeout");
+			READ_STR_INI_KEY (priv->twitter_bridge_host, gkf, "upload", "twitter_bridge_host");
+			READ_INT_INI_KEY (priv->twitter_bridge_port, gkf, "upload", "twitter_bridge_port");
 		}
 	}
 
@@ -1099,7 +1107,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	gst_caps_unref (caps);
 
 	photo_overlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-overlay");
-	if (priv->overlay_image)		
+	if (priv->overlay_image)
 		g_object_set (photo_overlay, "location", priv->overlay_image, NULL);
 	g_object_set (photo_overlay, "overlay-width", priv->print_width, NULL);
 	g_object_set (photo_overlay, "overlay-height", priv->print_height, NULL);
@@ -2240,7 +2248,7 @@ static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext
 	cairo_set_source_surface(cr, cairosurface, priv->print_x_offset, priv->print_y_offset);
 	cairo_paint(cr);
 	cairo_set_matrix(cr, &m);
-	
+
 	gst_buffer_unmap (priv->print_buffer, &map);
 }
 
@@ -2354,13 +2362,15 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 		g_free (filename);
 		GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
 
-		if (priv->do_twitter)
+		if (priv->twitter_bridge_host && priv->twitter_bridge_port)
 		{
 			JsonParser *parser;
 			JsonNode *root;
 			JsonReader *reader;
 			GError *error;
 			const char *link_url;
+			GSocketConnection *connection = NULL;
+			GSocketClient *client;
 
 			parser = json_parser_new ();
 
@@ -2383,8 +2393,31 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 			link_url = json_reader_get_string_value (reader);
 			GST_INFO ("imgur uploaded photo url: %s", link_url);
 
+			client = g_socket_client_new();
+
+			connection = g_socket_client_connect_to_host (client,
+																										priv->twitter_bridge_host,
+																										priv->twitter_bridge_port,
+																										NULL,
+																										&error);
+
+			if (error != NULL) {
+						GST_WARNING ("Unable to connect to twitter bridge: %s", error->message);
+						g_error_free (error);
+			}
+
+			GOutputStream *ostream = g_io_stream_get_output_stream (G_IO_STREAM (connection));
+
+			g_output_stream_write  (ostream, link_url, strlen(link_url), NULL, NULL);
+			g_output_stream_write  (ostream, "\n", 1, NULL, &error);
+			if (error != NULL) {
+					GST_WARNING ("Unable to connect to send to twitter bridge: %s", error->message);
+					g_error_free (error);
+			}
+
 			g_object_unref (reader);
 			g_object_unref (parser);
+			GST_INFO ("Successfully twittered");
 		}
 		g_string_free (buf, TRUE);
 	}
@@ -2449,7 +2482,7 @@ int main (int argc, char *argv[])
 	gst_init (0, NULL);
 
 	pb = photo_booth_new ();
-	
+
 	if (argc == 2)
 		photo_booth_load_settings (pb, argv[1]);
 	else
