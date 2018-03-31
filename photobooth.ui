@@ -147,14 +147,26 @@
               </packing>
             </child>
             <child>
-              <object class="GtkImage" id="image">
+              <object class="GtkEventBox" id="image_event">
                 <property name="width_request">1280</property>
                 <property name="height_request">1024</property>
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="hexpand">True</property>
-                <property name="vexpand">True</property>
-                <property name="stock">gtk-missing-image</property>
+                <property name="events">GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON1_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK</property>
+                <signal name="button-press-event" handler="photo_booth_window_image_press" swapped="no"/>
+                <signal name="button-release-event" handler="photo_booth_window_image_release" swapped="no"/>
+                <signal name="motion-notify-event" handler="photo_booth_window_image_motion" swapped="no"/>
+                <child>
+                  <object class="GtkImage" id="image">
+                    <property name="width_request">1280</property>
+                    <property name="height_request">1024</property>
+                    <property name="visible">True</property>
+                    <property name="can_focus">False</property>
+                    <property name="hexpand">True</property>
+                    <property name="vexpand">True</property>
+                    <property name="stock">gtk-missing-image</property>
+                  </object>
+                </child>
               </object>
             </child>
             <style>

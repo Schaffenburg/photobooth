@@ -1089,7 +1089,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *photo_bin;
-	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee;
+	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee, *photo_facedetect;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -1117,6 +1117,9 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	g_object_set (photo_gamma, "gamma", 1.0, NULL);
 	photo_tee = gst_element_factory_make ("tee", "photo-tee");
 
+	if (priv->do_facedetect)
+		photo_facedetect = gst_element_factory_make ("facedetect", "photo-facedetect");
+
 	if (!(photo_bin && photo_source && photo_decoder && photo_freeze && photo_scale && photo_filter && photo_overlay && photo_convert && photo_tee))
 	{
 		GST_ERROR_OBJECT (photo_bin, "Failed to make photobin pipeline element(s)");
@@ -1125,10 +1128,29 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 
 	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL);
 
-	if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL))
+	if (photo_facedetect)
 	{
-		GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
-		return FALSE;
+		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-photoconvert");
+		GstElement *photo_faceoverlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-faceoverlay");
+		gst_bin_add_many (GST_BIN (photo_bin), detect_convert, photo_facedetect, photo_faceoverlay, NULL);
+		g_object_set (G_OBJECT (photo_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
+		if (gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_faceoverlay, photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL))
+		{
+			GST_INFO_OBJECT (photo_bin, "facedetect plugin will be used!");
+		} else {
+			gst_object_unref (photo_facedetect);
+			gst_object_unref (detect_convert);
+			gst_object_unref (photo_facedetect);
+			photo_facedetect = NULL;
+		}
+	}
+	if (!photo_facedetect)
+	{
+		if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL))
+		{
+			GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
+			return FALSE;
+		}
 	}
 
 	pad = gst_element_get_request_pad (photo_tee, "src_%u");
@@ -1185,12 +1207,19 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 static void photo_booth_faces_detected (GstStructure * structure)
 {
 	PhotoBooth *pb;
+	GstElement *src;
 	PhotoBoothPrivate *priv;
 	const GValue *faces;
 	gst_structure_get (structure, "pb", G_TYPE_POINTER, &pb, NULL);
+	gst_structure_get (structure, "element", G_TYPE_POINTER, &src, NULL);
 	priv = photo_booth_get_instance_private (pb);
 	faces = gst_structure_get_value (structure, "faces");
-	photo_booth_window_face_detected (priv->win, faces);
+	if (g_str_has_prefix (GST_ELEMENT_NAME (src), "video")) {
+		photo_booth_window_face_detected (priv->win, faces);
+	} else {
+		GST_WARNING ("FACE DETECTION FOR PHOTO TBI!!!!!!!!!!!!!!!!!!!!");
+	}
+
 }
 
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb)
@@ -1271,10 +1300,11 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		{
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
-			if (priv->state == PB_STATE_PREVIEW && structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
+			if (/*priv->state == PB_STATE_PREVIEW && */structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
 			{
 				GstStructure *new_s = gst_structure_copy (structure);
 				gst_structure_set (new_s, "pb", G_TYPE_POINTER, pb, NULL);
+				gst_structure_set (new_s, "element", G_TYPE_POINTER, src, NULL);
 				g_main_context_invoke_full (NULL, 0, (GSourceFunc) photo_booth_faces_detected, new_s, (GDestroyNotify) gst_structure_free);
 			}
 			break;
@@ -1332,7 +1362,8 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	rect.y = (size2.height-gdk_pixbuf_get_height (overlay_pixbuf))/2;
 	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
-	gtk_fixed_move (GTK_FIXED (gtk_widget_get_parent (GTK_WIDGET (priv->win->image))), GTK_WIDGET (priv->win->image), rect.x, 0);
+	GST_DEBUG_OBJECT (priv->win->image_event, "fixed? %i", GTK_IS_FIXED (priv->win->fixed));
+	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image_event), rect.x, 0);
 	g_object_set_data (G_OBJECT (priv->win->image), "screen-offset-y", GINT_TO_POINTER (rect.y));
 
 	return FALSE;

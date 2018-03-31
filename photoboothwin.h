@@ -25,7 +25,7 @@ G_BEGIN_DECLS
 #define PHOTO_BOOTH_WINDOW(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj), PHOTO_BOOTH_WINDOW_TYPE, PhotoBoothWindow))
 #define PHOTO_BOOTH_WINDOW_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass),  PHOTO_BOOTH_WINDOW_TYPE, PhotoBoothWindowClass))
 #define IS_PHOTO_BOOTH_WINDOW(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj), PHOTO_BOOTH_WINDOW_TYPE))
-#define IS_PHOTO_BOOTH_WINDOW_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass),  PHOTO_BOOTH_WINDOW_TYPE)) 
+#define IS_PHOTO_BOOTH_WINDOW_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass),  PHOTO_BOOTH_WINDOW_TYPE))
 
 typedef struct _PhotoBoothWindow               PhotoBoothWindow;
 typedef struct _PhotoBoothWindowClass          PhotoBoothWindowClass;
@@ -34,7 +34,9 @@ struct _PhotoBoothWindow
 {
 	GtkApplicationWindow parent;
 	GtkWidget *gtkgstwidget;
+	GtkFixed *fixed;
 	GtkImage *image;
+	GtkEventBox *image_event;
 	GtkButton *button_cancel, *button_print, *button_upload;
 	GtkSwitch *switch_flip;
 	GtkLabel *status_clock, *status, *status_printer;
@@ -55,6 +57,9 @@ void                    photo_booth_window_show_cursor      (PhotoBoothWindow *w
 void                    photo_booth_window_set_copies_show  (PhotoBoothWindow *win, gint min, gint max, gint def);
 gint                    photo_booth_window_get_copies_hide  (PhotoBoothWindow *win);
 void                    photo_booth_window_face_detected    (PhotoBoothWindow *win, const GValue *faces);
+gboolean                photo_booth_window_image_press      (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean                photo_booth_window_image_release    (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean                photo_booth_window_image_motion     (GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
 
 G_END_DECLS
 
