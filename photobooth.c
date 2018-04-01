@@ -1217,9 +1217,8 @@ static void photo_booth_faces_detected (GstStructure * structure)
 	if (g_str_has_prefix (GST_ELEMENT_NAME (src), "video")) {
 		photo_booth_window_face_detected (priv->win, faces);
 	} else {
-		GST_WARNING ("FACE DETECTION FOR PHOTO TBI!!!!!!!!!!!!!!!!!!!!");
+		photo_booth_window_face_detected (priv->win, faces);
 	}
-
 }
 
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb)
@@ -1300,7 +1299,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		{
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
-			if (/*priv->state == PB_STATE_PREVIEW && */structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
+			if ((priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_PROCESS_PHOTO) && structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
 			{
 				GstStructure *new_s = gst_structure_copy (structure);
 				gst_structure_set (new_s, "pb", G_TYPE_POINTER, pb, NULL);
@@ -1362,8 +1361,8 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	rect.y = (size2.height-gdk_pixbuf_get_height (overlay_pixbuf))/2;
 	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
-	GST_DEBUG_OBJECT (priv->win->image_event, "fixed? %i", GTK_IS_FIXED (priv->win->fixed));
-	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image_event), rect.x, 0);
+	GST_DEBUG_OBJECT (priv->win->image, "fixed? %i", GTK_IS_FIXED (priv->win->fixed));
+	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
 	g_object_set_data (G_OBJECT (priv->win->image), "screen-offset-y", GINT_TO_POINTER (rect.y));
 
 	return FALSE;

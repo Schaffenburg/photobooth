@@ -36,7 +36,6 @@ struct _PhotoBoothWindow
 	GtkWidget *gtkgstwidget;
 	GtkFixed *fixed;
 	GtkImage *image;
-	GtkEventBox *image_event;
 	GtkButton *button_cancel, *button_print, *button_upload;
 	GtkSwitch *switch_flip;
 	GtkLabel *status_clock, *status, *status_printer;
@@ -57,9 +56,9 @@ void                    photo_booth_window_show_cursor      (PhotoBoothWindow *w
 void                    photo_booth_window_set_copies_show  (PhotoBoothWindow *win, gint min, gint max, gint def);
 gint                    photo_booth_window_get_copies_hide  (PhotoBoothWindow *win);
 void                    photo_booth_window_face_detected    (PhotoBoothWindow *win, const GValue *faces);
-gboolean                photo_booth_window_image_press      (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
-gboolean                photo_booth_window_image_release    (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
-gboolean                photo_booth_window_image_motion     (GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
+gboolean                photo_booth_window_mask_press       (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean                photo_booth_window_mask_release     (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
+gboolean                photo_booth_window_mask_motion      (GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
 
 G_END_DECLS
 
