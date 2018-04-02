@@ -28,18 +28,9 @@ struct _PhotoBoothWindowPrivate
 	GtkLabel *countdown_label;
 	GtkScale *copies;
 	gint countdown;
-	GList *masks;
 	gboolean dragging;
 	gint screenoffset_x, screenoffset_y;
 };
-
-typedef struct {
-	GdkPixbuf *pixbuf;
-	GtkWidget *imagew, *eventw;
-	gint offset_x, offset_y;
-	gboolean dragging;
-	gint dragstartoffsetx, dragstartoffsety;
-} PhotoBoothMask;
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLICATION_WINDOW);
 
@@ -90,7 +81,6 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 
 static void photo_booth_window_init (PhotoBoothWindow *win)
 {
-	GError *error = NULL;
 	gtk_widget_init_template (GTK_WIDGET (win));
 	PhotoBoothWindowPrivate *priv;
 	priv = photo_booth_window_get_instance_private (win);
@@ -117,61 +107,10 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 
 	gtk_widget_set_has_window (GTK_WIDGET (win->fixed), TRUE);
 	priv->dragging = FALSE;
-
-	// TODO this needs to be specified in a config file or image metadata!
-	PhotoBoothMask *mask = g_slice_new0 (PhotoBoothMask);
-	mask->pixbuf = gdk_pixbuf_new_from_file_at_scale ("overlays/mask_nasenbrille.png", -1, -1, FALSE, &error);
-	mask->eventw = gtk_event_box_new ();
-	gtk_widget_add_events(mask->eventw, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON1_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
-    gtk_widget_set_can_focus(mask->eventw, FALSE);
-	g_signal_connect (mask->eventw, "button-press-event", G_CALLBACK (photo_booth_window_mask_press), win);
-	g_signal_connect (mask->eventw, "button-release-event", G_CALLBACK (photo_booth_window_mask_release), win);
-	g_signal_connect (mask->eventw, "motion-notify-event", G_CALLBACK (photo_booth_window_mask_motion), win);
-	mask->imagew = gtk_image_new ();
-	gtk_container_add (GTK_CONTAINER (mask->eventw), mask->imagew);
-
-	mask->offset_x = 0;
-	mask->offset_y = 40;
-	mask->dragstartoffsetx = mask->dragstartoffsety = 0;
-	mask->dragging = FALSE;
-	gtk_fixed_put (win->fixed, mask->eventw, 0, 0);
-// 	gtk_fixed_put (win->fixed, mask->imagew, 0, 0);
-	priv->masks = g_list_append (priv->masks, mask);
-
-	mask = g_slice_new0 (PhotoBoothMask);
-	mask->pixbuf = gdk_pixbuf_new_from_file_at_scale ("overlays/mask_fuchsohren.png", -1, -1, FALSE, &error);
-	mask->eventw = gtk_event_box_new ();
-	gtk_widget_add_events(mask->eventw, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON1_MOTION_MASK | GDK_POINTER_MOTION_HINT_MASK);
-    gtk_widget_set_can_focus(mask->eventw, FALSE);
-	g_signal_connect (mask->eventw, "button-press-event", G_CALLBACK (photo_booth_window_mask_press), win);
-	g_signal_connect (mask->eventw, "button-release-event", G_CALLBACK (photo_booth_window_mask_release), win);
-	g_signal_connect (mask->eventw, "motion-notify-event", G_CALLBACK (photo_booth_window_mask_motion), win);
-	mask->imagew = gtk_image_new ();
-	gtk_container_add (GTK_CONTAINER (mask->eventw), mask->imagew);
-	mask->offset_x = 10;
-	mask->offset_y = -120;
-	mask->dragstartoffsetx = mask->dragstartoffsety = 0;
-	mask->dragging = FALSE;
-	gtk_fixed_put (win->fixed, mask->eventw, 0, 0);
-// 	gtk_fixed_put (win->fixed, mask->imagew, 0, 0);
-	priv->masks = g_list_append (priv->masks, mask);
-}
-
-static void
-_pbw_free_masks (PhotoBoothMask *mask)
-{
-	g_object_unref (mask->pixbuf);
-	gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (GTK_WIDGET (mask->imagew))), mask->imagew);
-	gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (GTK_WIDGET (mask->eventw))), mask->eventw);
-  g_slice_free (PhotoBoothMask, mask);
 }
 
 static void photo_booth_window_dispose (GObject *object)
 {
-	PhotoBoothWindowPrivate *priv;
-	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (object));
-	g_list_free_full (priv->masks, (GDestroyNotify) _pbw_free_masks);
-	priv->masks = NULL;
 	G_OBJECT_CLASS (photo_booth_window_parent_class)->dispose (object);
 }
 
@@ -309,156 +248,6 @@ gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, g
 	if (intval == 1)
 		return g_strdup (_("1 print"));
 	return g_strdup_printf (_("%d prints"), intval);
-}
-
-void photo_booth_window_face_detected (PhotoBoothWindow *win, const GValue *faces)
-{
-	PhotoBoothWindowPrivate *priv;
-	guint i, n_masks, n_faces = 0;
-	gchar *contents;
-	GList *masks;
-	GValue off = G_VALUE_INIT;
-	gint screen_offset_x, screen_offset_y;
-
-	priv = photo_booth_window_get_instance_private (win);
-	n_masks = g_list_length (priv->masks);
-
-	if (faces)
-	{
-		contents = g_strdup_value_contents (faces);
-		n_faces = gst_value_list_get_size (faces);
-		g_value_init (&off, G_TYPE_INT);
-		gtk_container_child_get_property (GTK_CONTAINER (win->fixed), GTK_WIDGET (win->image), "x", &off);
-		screen_offset_x = g_value_get_int (&off);
-		screen_offset_y = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (win->image), "screen-offset-y"));
-		GST_TRACE ("Detected objects: %s face=%i masks=%i screen_offset=(%d, %d)", *(&contents), n_faces, n_masks, screen_offset_x, screen_offset_y);
-		g_free (contents);
-	}
-
-	for (i = 0; i < n_masks; i++)
-	{
-		PhotoBoothMask *mask;
-		masks = g_list_nth (priv->masks, i);
-		mask = masks->data;
-		if (mask && i < n_faces)
-		{
-			const GValue *face = gst_value_list_get_value (faces, i);
-			const GstStructure *face_struct = gst_value_get_structure (face);
-			GdkPixbuf *scaled_mask_pixbuf;
-			guint x, y, width, height;
-			gst_structure_get_uint (face_struct, "x", &x);
-			gst_structure_get_uint (face_struct, "y", &y);
-			gst_structure_get_uint (face_struct, "width", &width);
-			gst_structure_get_uint (face_struct, "height", &height);
-			gdouble scaling_factor;
-			scaling_factor = (gdouble) width / (gdouble) gdk_pixbuf_get_width (mask->pixbuf);
-			GST_LOG ("mask[%i] size: (%dx%d) (scaling factor=%.2f) position: (%d,%d)", i, width, height, scaling_factor, x, y);
-			height = (gdouble) gdk_pixbuf_get_height (mask->pixbuf) * scaling_factor;
-			x += screen_offset_x + (gdouble) mask->offset_x * scaling_factor;
-			y += screen_offset_y + (gdouble) mask->offset_y * scaling_factor;
-			gtk_fixed_move (win->fixed, mask->eventw, x, y);
-// 			gtk_fixed_move (win->fixed, mask->imagew, x, y);
-			scaled_mask_pixbuf = gdk_pixbuf_scale_simple (mask->pixbuf, width, height, GDK_INTERP_BILINEAR);
-			gtk_image_set_from_pixbuf (GTK_IMAGE (mask->imagew), scaled_mask_pixbuf);
-			gtk_widget_show (mask->eventw);
-			gtk_widget_show (mask->imagew);
-		} else {
-			GST_LOG ("mask[%i] hide!", i);
-			gtk_widget_hide (mask->eventw);
-			gtk_widget_hide (mask->imagew);
-		}
-	}
-}
-
-PhotoBoothMask * _get_mask_for_element (GList *masks, GtkWidget *widget)
-{
-	guint i, n_masks;
-	n_masks = g_list_length (masks);
-
-	for (i = 0; i < n_masks; i++)
-	{
-		GST_WARNING ("mask iterate %i", i);
-		PhotoBoothMask *mask;
-		masks = g_list_nth (masks, i);
-		mask = masks->data;
-		if (mask)
-		{
-			GST_WARNING_OBJECT (mask->eventw, "mask eventbox");
-			if (mask->eventw == widget) {
-				GST_WARNING ("FOUND MASK %" GST_PTR_FORMAT, mask->imagew);
-				return mask;
-			}
-		}
-	}
-	GST_WARNING ("MASK NOT FOUND FOR WIDGET %" GST_PTR_FORMAT, widget);
-	return NULL;
-}
-
-gboolean photo_booth_window_mask_press (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
-{
-	PhotoBoothWindowPrivate *priv;
-	GtkWidget* p;
-	gint widgetoffsetx, widgetoffsety, screenoffsetx, screenoffsety;
-	PhotoBoothMask *mask;
-
-	GST_INFO_OBJECT (widget, "MASK PRESS");
-
-	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (user_data));
-
-	mask = _get_mask_for_element (priv->masks, widget);
-
-	if (!mask)
-		return TRUE;
-
-	mask->dragging = TRUE;
-	p = gtk_widget_get_parent (widget);
-	gdk_window_get_position (gtk_widget_get_parent_window (p), &widgetoffsetx, &widgetoffsety);
-
-	p = gtk_widget_get_parent (p);
-	gdk_window_get_position (gtk_widget_get_parent_window (p), &screenoffsetx, &screenoffsety);
-
-	mask->dragstartoffsetx = (int)event->x+widgetoffsetx+screenoffsetx;
-	mask->dragstartoffsety = (int)event->y+widgetoffsety+screenoffsety;
-
-	return TRUE;
-}
-
-gboolean photo_booth_window_mask_release (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
-{
-	PhotoBoothWindowPrivate *priv;
-	PhotoBoothMask *mask;
-	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (user_data));
-
-	mask = _get_mask_for_element (priv->masks, widget);
-
-	if (mask)
-		mask->dragging = FALSE;
-
-	return TRUE;
-}
-
-gboolean photo_booth_window_mask_motion (GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
-{
-	PhotoBoothWindowPrivate *priv;
-	PhotoBoothMask *mask;
-	priv = photo_booth_window_get_instance_private (PHOTO_BOOTH_WINDOW (user_data));
-
-	mask = _get_mask_for_element (priv->masks, widget);
-
-	GST_TRACE_OBJECT (user_data, "event (%.0f,%.0f) root (%d,%d) off", event->x, event->y, (int)event->x_root, (int)event->y_root);
-
-	if (!mask)
-		return TRUE;
-
-	GST_TRACE_OBJECT (user_data, "startoffset (%d,%d)", mask->dragstartoffsetx, mask->dragstartoffsety);
-
-	if (mask->dragging)
-	{
-		int x = (int)event->x_root - mask->dragstartoffsetx;
-		int y = (int)event->y_root - mask->dragstartoffsety;
-		gtk_fixed_move (GTK_FIXED (gtk_widget_get_parent (widget)), GTK_WIDGET (widget), x, y);
-	}
-	return TRUE;
 }
 
 PhotoBoothWindow * photo_booth_window_new (PhotoBooth *pb)

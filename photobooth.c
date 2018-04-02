@@ -36,6 +36,7 @@
 #include "photobooth.h"
 #include "photoboothwin.h"
 #include "photoboothled.h"
+#include "photoboothmasquerade.h"
 
 #include <gio/gio.h>
 #define G_SETTINGS_ENABLE_BACKEND
@@ -104,7 +105,9 @@ struct _PhotoBoothPrivate
 	gchar             *twitter_bridge_host;
 	guint              twitter_bridge_port;
 	gboolean           do_flip;
+
 	gboolean           do_facedetect;
+	PhotoBoothMasquerade *masquerade;
 
 	PhotoBoothLed     *led;
 };
@@ -292,9 +295,9 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->twitter_bridge_host = g_strdup (DEFAULT_TWITTER_BRIDGE_HOST);
 	priv->twitter_bridge_port = DEFAULT_TWITTER_BRIDGE_PORT;
 	priv->do_flip = DEFAULT_FLIP;
-	priv->do_facedetect = DEFAULT_FACEDETECT;
 	priv->state_change_watchdog_timeout_id = 0;
-
+	priv->do_facedetect = DEFAULT_FACEDETECT;
+	priv->masquerade = NULL;
 	priv->led = photo_booth_led_new ();
 
 	G_stylesheet_filename = NULL;
@@ -332,6 +335,10 @@ static void photo_booth_setup_window (PhotoBooth *pb)
 	priv->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
 	photo_booth_setup_gstreamer (pb);
 	photo_booth_get_printer_status (pb);
+	if (priv->do_facedetect) {
+		priv->masquerade = photo_booth_masquerade_new (priv->win->fixed);
+// 		photo_booth_masquerade_set_fixed (priv->masquerade, priv->win->fixed);
+	}
 }
 
 static void photo_booth_activate (GApplication *app)
@@ -387,6 +394,8 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->imgur_access_token);
 	g_free (priv->imgur_description);
   g_free (priv->twitter_bridge_host);
+	if (priv->masquerade)
+		g_object_unref (priv->masquerade);
 	g_hash_table_destroy (G_strings_table);
 	G_strings_table = NULL;
 	g_mutex_clear (&priv->processing_mutex);
@@ -1060,7 +1069,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 		g_object_set (G_OBJECT (video_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
 		if (gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_facedetect, detect_convert, NULL))
 		{
-			GST_INFO_OBJECT (video_bin, "facedetect plugin will be used!");
+			GST_INFO_OBJECT (priv->masquerade, "facedetect plugin will be used!");
 			pad = gst_element_get_static_pad (detect_convert, "src");
 		} else {
 			gst_object_unref (video_facedetect);
@@ -1130,17 +1139,50 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 
 	if (photo_facedetect)
 	{
+		GstPad *masksinkpad, *masksrcpad;
+    GstElement *maskbin = gst_element_factory_make ("bin", "photo-mask-bin");
 		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-photoconvert");
 		GstElement *photo_faceoverlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-faceoverlay");
-		gst_bin_add_many (GST_BIN (photo_bin), detect_convert, photo_facedetect, photo_faceoverlay, NULL);
+		g_assert (maskbin);
+		g_assert (detect_convert);
+		g_assert (photo_faceoverlay);
+		gboolean ret = gst_bin_add (GST_BIN (maskbin), photo_faceoverlay);
+		g_assert (ret);
+		gst_bin_add_many (GST_BIN (photo_bin), detect_convert, photo_facedetect, NULL);
 		g_object_set (G_OBJECT (photo_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
-		if (gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_faceoverlay, photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL))
+		pad = gst_element_get_static_pad (photo_faceoverlay, "sink");
+		g_assert (pad);
+		masksinkpad = gst_ghost_pad_new ("sink", pad);
+		g_assert (masksinkpad);
+		gst_pad_set_active (masksinkpad, TRUE);
+		gst_object_unref (pad);
+		pad = gst_element_get_static_pad (photo_faceoverlay, "src");
+		g_assert (pad);
+		masksrcpad = gst_ghost_pad_new ("src", pad);
+		g_assert (masksrcpad);
+		gst_pad_set_active (masksrcpad, TRUE);
+		gst_object_unref (pad);
+		ret = gst_bin_add (GST_BIN (photo_bin), maskbin);
+		g_assert (ret);
+		GST_INFO_OBJECT (photo_bin, "now linking...");
+		ret = gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, NULL);
+		g_assert (ret);
+		ret = gst_element_link (photo_overlay, maskbin);
+		g_assert (ret);
+		ret = gst_element_link (maskbin, photo_convert);
+		g_assert (ret);
+		ret = gst_element_link_many (photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL);
+		g_assert (ret);
+
+
+		if (ret)//(gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, maskbin, photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL))
 		{
 			GST_INFO_OBJECT (photo_bin, "facedetect plugin will be used!");
 		} else {
 			gst_object_unref (photo_facedetect);
 			gst_object_unref (detect_convert);
-			gst_object_unref (photo_facedetect);
+			gst_object_unref (photo_faceoverlay);
+			gst_object_unref (maskbin);
 			photo_facedetect = NULL;
 		}
 	}
@@ -1202,23 +1244,6 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	gst_bin_add (GST_BIN (priv->audio_pipeline), priv->audio_playbin);
 
 	return TRUE;
-}
-
-static void photo_booth_faces_detected (GstStructure * structure)
-{
-	PhotoBooth *pb;
-	GstElement *src;
-	PhotoBoothPrivate *priv;
-	const GValue *faces;
-	gst_structure_get (structure, "pb", G_TYPE_POINTER, &pb, NULL);
-	gst_structure_get (structure, "element", G_TYPE_POINTER, &src, NULL);
-	priv = photo_booth_get_instance_private (pb);
-	faces = gst_structure_get_value (structure, "faces");
-	if (g_str_has_prefix (GST_ELEMENT_NAME (src), "video")) {
-		photo_booth_window_face_detected (priv->win, faces);
-	} else {
-		photo_booth_window_face_detected (priv->win, faces);
-	}
 }
 
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb)
@@ -1302,9 +1327,9 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			if ((priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_PROCESS_PHOTO) && structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0)
 			{
 				GstStructure *new_s = gst_structure_copy (structure);
-				gst_structure_set (new_s, "pb", G_TYPE_POINTER, pb, NULL);
+				gst_structure_set (new_s, "masq", G_TYPE_POINTER, priv->masquerade, NULL);
 				gst_structure_set (new_s, "element", G_TYPE_POINTER, src, NULL);
-				g_main_context_invoke_full (NULL, 0, (GSourceFunc) photo_booth_faces_detected, new_s, (GDestroyNotify) gst_structure_free);
+				g_main_context_invoke_full (NULL, 0, (GSourceFunc) photo_booth_masquerade_facedetect_update, new_s, (GDestroyNotify) gst_structure_free);
 			}
 			break;
 		}
@@ -1363,8 +1388,14 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
 	GST_DEBUG_OBJECT (priv->win->image, "fixed? %i", GTK_IS_FIXED (priv->win->fixed));
 	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
-	g_object_set_data (G_OBJECT (priv->win->image), "screen-offset-y", GINT_TO_POINTER (rect.y));
+	g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
+	GValue off = G_VALUE_INIT;
+	g_value_init (&off, G_TYPE_INT);
+	gtk_container_child_get_property (GTK_CONTAINER (priv->win->fixed), GTK_WIDGET (priv->win->image), "x", &off);
+	gint screen_offset_x = g_value_get_int (&off);
 
+	GST_WARNING_OBJECT (priv->win->image, "rect.x=%d from image screen_offset_x=%d", rect.x, screen_offset_x);
+	g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-x", GINT_TO_POINTER (screen_offset_x));
 	return FALSE;
 }
 
@@ -1702,7 +1733,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
-	photo_booth_window_face_detected (priv->win, NULL);
+// 	photo_booth_window_face_detected (priv->win, NULL);
 
 	if (priv->countdown > 1)
 	{
