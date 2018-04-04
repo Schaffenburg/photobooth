@@ -42,8 +42,8 @@ struct _PhotoBoothMasqueradeClass
 };
 
 GType                 photo_booth_masquerade_get_type          (void);
-PhotoBoothMasquerade *photo_booth_masquerade_new               (GtkFixed *fixed);
-void                  photo_booth_masquerade_set_fixed         (PhotoBoothMasquerade *masq, GtkFixed *fixed);
+PhotoBoothMasquerade *photo_booth_masquerade_new               (void);
+void                  photo_booth_masquerade_init_masks        (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json);
 void                  photo_booth_masquerade_faces_detected    (PhotoBoothMasquerade *masq, const GValue *faces, PhotoboothState state);
 void                  photo_booth_masquerade_facedetect_update (GstStructure *structure);
 

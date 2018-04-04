@@ -22,6 +22,7 @@
 #include <gst/gst.h>
 #include <gphoto2/gphoto2.h>
 #include <gphoto2/gphoto2-camera.h>
+#include <json-glib/json-glib.h>
 
 #define CONTROL_VIDEO          '1'     /* start movie capture */
 #define CONTROL_PRETRIGGER     '2'     /* pretrigger */

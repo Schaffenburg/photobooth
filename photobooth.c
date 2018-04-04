@@ -28,7 +28,6 @@
 #include <gst/app/app.h>
 #include <curl/curl.h>
 #include <X11/Xlib.h>
-#include <json-glib/json-glib.h>
 
 // #ifdef HAVE_LIBCANBERRA
 #include <canberra-gtk.h>
@@ -106,8 +105,10 @@ struct _PhotoBoothPrivate
 	guint              twitter_bridge_port;
 	gboolean           do_flip;
 
-	gboolean           do_facedetect;
 	PhotoBoothMasquerade *masquerade;
+	gboolean           do_facedetect;
+	gchar              *masks_dir;
+	gchar              *masks_json;
 
 	PhotoBoothLed     *led;
 };
@@ -298,6 +299,8 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->state_change_watchdog_timeout_id = 0;
 	priv->do_facedetect = DEFAULT_FACEDETECT;
 	priv->masquerade = NULL;
+	priv->masks_dir = NULL;
+	priv->masks_json = NULL;
 	priv->led = photo_booth_led_new ();
 
 	G_stylesheet_filename = NULL;
@@ -390,6 +393,8 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->imgur_access_token);
 	g_free (priv->imgur_description);
   g_free (priv->twitter_bridge_host);
+	g_free (priv->masks_dir);
+	g_free (priv->masks_json);
 	if (priv->masquerade)
 		g_object_unref (priv->masquerade);
 	g_hash_table_destroy (G_strings_table);
@@ -578,6 +583,11 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_INT_INI_KEY (priv->upload_timeout, gkf, "upload", "upload_timeout");
 			READ_STR_INI_KEY (priv->twitter_bridge_host, gkf, "upload", "twitter_bridge_host");
 			READ_INT_INI_KEY (priv->twitter_bridge_port, gkf, "upload", "twitter_bridge_port");
+		}
+		if (g_key_file_has_group (gkf, "masks"))
+		{
+			READ_STR_INI_KEY (priv->masks_dir, gkf, "masks", "directory");
+			READ_STR_INI_KEY (priv->masks_json, gkf, "masks", "list");
 		}
 	}
 
@@ -1311,7 +1321,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		{
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
-			if ((priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_COUNTDOWN || priv->state == PB_STATE_PROCESS_PHOTO) && structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0 && priv->masquerade)
+			if (/*(priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_COUNTDOWN || priv->state == PB_STATE_PROCESS_PHOTO) && */structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0 && priv->masquerade)
 			{
 				GstStructure *new_s = gst_structure_copy (structure);
 				gst_structure_set (new_s, "masq", G_TYPE_POINTER, priv->masquerade, NULL);
@@ -1388,7 +1398,8 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 
 	if (priv->do_facedetect) {
 		GST_INFO_OBJECT (pb, "new masquerade fixed: %" GST_PTR_FORMAT, priv->win->fixed);
-		priv->masquerade = photo_booth_masquerade_new (priv->win->fixed);
+		priv->masquerade = photo_booth_masquerade_new ();
+		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json);
 	}
 
 	return FALSE;

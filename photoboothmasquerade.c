@@ -181,15 +181,73 @@ static void photo_booth_masquerade_init (PhotoBoothMasquerade *masq)
 	GST_LOG_OBJECT (masq, "init masquerade");
 }
 
-static void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed)
+void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json)
 {
-	PhotoBoothMask *mask;
-	GST_LOG_OBJECT (masq, "init masks fixed=%" GST_PTR_FORMAT, fixed);
-	mask = photo_booth_mask_new (fixed, "overlays/mask_nasenbrille.png", 0, 40);
-	masq->masks = g_list_append (masq->masks, mask);
+	JsonParser *parser;
+	JsonNode *root;
+	JsonReader *reader;
+	GError *error = NULL;
+	gint i, n_masks;
 
-	mask = photo_booth_mask_new (fixed, "overlays/mask_fuchsohren.png", 10, -120);
-	masq->masks = g_list_append (masq->masks, mask);
+	if (!list_json)
+		return;
+
+	parser = json_parser_new ();
+
+	json_parser_load_from_data (parser, list_json, -1, &error);
+	if (error)
+		goto fail;
+
+	root = json_parser_get_root (parser);
+	reader = json_reader_new (root);
+
+	if (!json_reader_is_array(reader))
+		goto fail;
+
+	n_masks = json_reader_count_elements (reader);
+
+	GST_INFO ("found %i masks in list", n_masks);
+
+	for (i = 0; i < n_masks; i++)
+	{
+		const gchar *filename;
+		gint offset_x, offset_y;
+		PhotoBoothMask *mask;
+
+		if (!json_reader_read_element (reader, i))
+			goto fail;
+
+		if (!json_reader_read_element (reader, 0))
+			goto fail;
+		filename = json_reader_get_string_value (reader);
+		json_reader_end_element (reader);
+
+		if (!json_reader_read_element (reader, 1))
+			goto fail;
+		offset_x = json_reader_get_int_value (reader);
+		json_reader_end_element (reader);
+
+		if (!json_reader_read_element (reader, 2))
+			goto fail;
+		offset_y = json_reader_get_int_value (reader);
+		json_reader_end_element (reader);
+
+		gchar *maskpath = g_strconcat (dir, filename, NULL);
+		GST_INFO ("imgur read mask filename=%s x=%i y=%i", maskpath, offset_x, offset_y);
+		mask = photo_booth_mask_new (fixed, maskpath, offset_x, offset_y);
+		masq->masks = g_list_append (masq->masks, mask);
+		g_free (maskpath);
+		json_reader_end_element (reader);
+	}
+	g_object_unref (reader);
+	g_object_unref (parser);
+	return;
+
+fail:
+	GST_WARNING_OBJECT (masq, "couldn't parse masks list JSON '%s': %s", list_json, error->message);
+	g_error_free (error);
+	g_object_unref (reader);
+	g_object_unref (parser);
 }
 
 static gint _pbm_sort_faces_by_xpos (const GValue *f1, const GValue *f2)
@@ -308,10 +366,7 @@ gboolean photo_booth_masquerade_motion (GtkWidget *widget, GdkEventMotion *event
 	return TRUE;
 }
 
-PhotoBoothMasquerade *photo_booth_masquerade_new (GtkFixed *fixed)
+PhotoBoothMasquerade *photo_booth_masquerade_new ()
 {
-	PhotoBoothMasquerade *masq = g_object_new (TYPE_PHOTO_BOOTH_MASQUERADE, NULL);
-	GST_INFO ("new masquerade %" GST_PTR_FORMAT, masq);
-	photo_booth_masquerade_init_masks (masq, fixed);
-	return masq;
+	return g_object_new (TYPE_PHOTO_BOOTH_MASQUERADE, NULL);
 }
