@@ -21,11 +21,11 @@
 
 G_BEGIN_DECLS
 
-#define PHOTO_BOOTH_MASQUERADE_TYPE                (photo_booth_mask_get_type ())
-#define PHOTO_BOOTH_MASQUERADE(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),PHOTO_BOOTH_MASQUERADE_TYPE,PhotoBoothMasquerade))
-#define PHOTO_BOOTH_MASQUERADE_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass), PHOTO_BOOTH_MASQUERADE_TYPE,PhotoBoothMasqueradeClass))
-#define IS_PHOTO_BOOTH_MASQUERADE(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj),PHOTO_BOOTH_MASQUERADE_TYPE))
-#define IS_PHOTO_BOOTH_MASQUERADE_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), PHOTO_BOOTH_MASQUERADE_TYPE))
+#define TYPE_PHOTO_BOOTH_MASQUERADE                (photo_booth_masquerade_get_type ())
+#define PHOTO_BOOTH_MASQUERADE(obj)                (G_TYPE_CHECK_INSTANCE_CAST ((obj),TYPE_PHOTO_BOOTH_MASQUERADE,PhotoBoothMasquerade))
+#define PHOTO_BOOTH_MASQUERADE_CLASS(klass)        (G_TYPE_CHECK_CLASS_CAST ((klass), TYPE_PHOTO_BOOTH_MASQUERADE,PhotoBoothMasqueradeClass))
+#define IS_PHOTO_BOOTH_MASQUERADE(obj)             (G_TYPE_CHECK_INSTANCE_TYPE ((obj),TYPE_PHOTO_BOOTH_MASQUERADE))
+#define IS_PHOTO_BOOTH_MASQUERADE_CLASS(klass)     (G_TYPE_CHECK_CLASS_TYPE ((klass), TYPE_PHOTO_BOOTH_MASQUERADE))
 
 typedef struct _PhotoBoothMasquerade              PhotoBoothMasquerade;
 typedef struct _PhotoBoothMasqueradeClass         PhotoBoothMasqueradeClass;
@@ -33,7 +33,6 @@ typedef struct _PhotoBoothMasqueradeClass         PhotoBoothMasqueradeClass;
 struct _PhotoBoothMasquerade
 {
 	GObject parent;
-	GtkFixed *fixed;
 	GList *masks;
 };
 
@@ -45,6 +44,7 @@ struct _PhotoBoothMasqueradeClass
 GType                 photo_booth_masquerade_get_type          (void);
 PhotoBoothMasquerade *photo_booth_masquerade_new               (GtkFixed *fixed);
 void                  photo_booth_masquerade_set_fixed         (PhotoBoothMasquerade *masq, GtkFixed *fixed);
+void                  photo_booth_masquerade_faces_detected    (PhotoBoothMasquerade *masq, const GValue *faces, PhotoboothState state);
 void                  photo_booth_masquerade_facedetect_update (GstStructure *structure);
 
 G_END_DECLS

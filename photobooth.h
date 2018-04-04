@@ -126,9 +126,10 @@ struct _PhotoBoothClass
 	GtkApplicationClass parent_class;
 };
 
-GType       photo_booth_get_type (void);
-PhotoBooth *photo_booth_new (void);
-void        photo_booth_load_settings (PhotoBooth *pb, const gchar *filename);
+GType        photo_booth_get_type (void);
+PhotoBooth  *photo_booth_new (void);
+void         photo_booth_load_settings (PhotoBooth *pb, const gchar *filename);
+const gchar* photo_booth_state_get_name (PhotoboothState state);
 
 G_END_DECLS
 
