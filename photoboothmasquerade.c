@@ -165,10 +165,10 @@ photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *s
 	}
 	else { // Captured Photo
 		width = (gdouble) width * mask->print_scaling_factor;
-		height = (gdouble) height * mask->print_scaling_factor;
-		x += mask->screen_offset_x + (gdouble) mask->offset_x * video_scaling_factor * mask->print_scaling_factor;
-		y += mask->screen_offset_y + (gdouble) mask->offset_y * video_scaling_factor * mask->print_scaling_factor;
-		GST_DEBUG_OBJECT (mask, "PHOTO mask size: (%dx%d) (video scaling factor=%.2f) position: (%d,%d) state: (%s)", width, height, video_scaling_factor, x, y, photo_booth_state_get_name (state));
+		height = (gdouble) gdk_pixbuf_get_height (mask->pixbuf) * video_scaling_factor * mask->print_scaling_factor;
+		x = (gdouble) x * mask->print_scaling_factor + mask->screen_offset_x + (gdouble) mask->offset_x * video_scaling_factor * mask->print_scaling_factor;
+		y = (gdouble) y * mask->print_scaling_factor + mask->screen_offset_y + (gdouble)mask->offset_y * video_scaling_factor * mask->print_scaling_factor;
+		GST_DEBUG_OBJECT (mask, "PHOTO mask size: (%dx%d) (print scaling factor=%.2f) position: (%d,%d) state: (%s)", width, height, mask->print_scaling_factor, x, y, photo_booth_state_get_name (state));
 		photo_booth_mask_connect_events (mask, photo_booth_masquerade_press, photo_booth_masquerade_release, photo_booth_masquerade_motion);
 		photo_booth_mask_create_overlay (mask, maskbin, width, height, x, y);
 	}
@@ -237,15 +237,13 @@ static void photo_booth_masquerade_init (PhotoBoothMasquerade *masq)
 	GST_LOG_OBJECT (masq, "init masquerade");
 }
 
-void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gint print_width, gint print_height)
+void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor)
 {
 	JsonParser *parser;
 	JsonNode *root;
 	JsonReader *reader;
 	GError *error = NULL;
 	gint i, n_masks;
-	gint screen_width, screen_height;
-	gdouble xfactor, yfactor;
 
 	if (!list_json)
 		return;
@@ -265,13 +263,6 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 	n_masks = json_reader_count_elements (reader);
 
 	GST_INFO ("found %i masks in list", n_masks);
-
-	screen_width = gtk_widget_get_allocated_width (GTK_WIDGET (fixed));
-	screen_height = gtk_widget_get_allocated_height (GTK_WIDGET (fixed));
-	xfactor = (gdouble) screen_width / print_width;
-	yfactor = (gdouble) screen_height / print_height;
-
-	GST_INFO_OBJECT (masq, "fixed widget's allocated size (%dx%d). print scaling factor x=%.2f y=%.2f", screen_width, screen_height, xfactor, yfactor);
 
 	for (i = 0; i < n_masks; i++)
 	{
@@ -298,7 +289,7 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 		json_reader_end_element (reader);
 
 		gchar *maskpath = g_strconcat (dir, filename, NULL);
-		mask = photo_booth_mask_new (i, fixed, maskpath, offset_x, offset_y, xfactor);
+		mask = photo_booth_mask_new (i, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
 		masq->masks = g_list_append (masq->masks, mask);
 		g_free (maskpath);
 		json_reader_end_element (reader);
@@ -330,10 +321,12 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	guint i, n_masks, n_faces = 0;
 	GList *masks, *sorted_faces = NULL;
 	const GValue *faces = NULL;
+	int state = 0;
 
 	GST_DEBUG ("photo_booth_masquerade_facedetect_update");
 	if (structure) {
 		faces = gst_structure_get_value (structure, "faces");
+		gst_structure_get_int (structure, "state", &state);
 	}
 	n_masks = g_list_length (masq->masks);
 
@@ -349,6 +342,11 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	{
 		const GValue *face = gst_value_list_get_value (faces, i);
 		sorted_faces = g_list_insert_sorted_with_data (sorted_faces, (GValue *) face, (GCompareDataFunc) _pbm_sort_faces_by_xpos, NULL);
+	}
+
+	if ((PhotoboothState) state >= PB_STATE_PROCESS_PHOTO)
+	{
+		sorted_faces = g_list_reverse (sorted_faces);
 	}
 
 	for (i = 0; i < n_masks; i++)

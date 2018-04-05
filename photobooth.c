@@ -1399,21 +1399,21 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	rect.y = (size2.height-gdk_pixbuf_get_height (overlay_pixbuf))/2;
 	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
-	GST_DEBUG_OBJECT (priv->win->image, "fixed? %i", GTK_IS_FIXED (priv->win->fixed));
 	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
-	g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
-	GValue off = G_VALUE_INIT;
-	g_value_init (&off, G_TYPE_INT);
-	gtk_container_child_get_property (GTK_CONTAINER (priv->win->fixed), GTK_WIDGET (priv->win->image), "x", &off);
-	gint screen_offset_x = g_value_get_int (&off);
-
-	GST_WARNING_OBJECT (priv->win->image, "rect.x=%d from image screen_offset_x=%d", rect.x, screen_offset_x);
-	g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-x", GINT_TO_POINTER (screen_offset_x));
 
 	if (priv->do_facedetect) {
-		GST_INFO_OBJECT (pb, "new masquerade fixed: %" GST_PTR_FORMAT, priv->win->fixed);
+		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
+		GValue off = G_VALUE_INIT;
+		g_value_init (&off, G_TYPE_INT);
+		gtk_container_child_get_property (GTK_CONTAINER (priv->win->fixed), GTK_WIDGET (priv->win->image), "x", &off);
+		gint screen_offset_x = g_value_get_int (&off);
+		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-x", GINT_TO_POINTER (screen_offset_x));
+		g_object_set_data (G_OBJECT (priv->win->fixed), "video-size", (gpointer) &priv->video_size);
+		gdouble xfactor = (gdouble) priv->video_size.w / priv->print_width;
+		gdouble yfactor = (gdouble) priv->video_size.h / priv->print_height;
+		GST_DEBUG_OBJECT (pb, "initialize masquerade with container %" GST_PTR_FORMAT " print xfactor=%f yfactor=%f", priv->win->fixed, xfactor, yfactor);
 		priv->masquerade = photo_booth_masquerade_new ();
-		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json, priv->print_width, priv->print_height);
+		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json, xfactor);
 	}
 
 	return FALSE;

@@ -43,7 +43,7 @@ struct _PhotoBoothMasqueradeClass
 
 GType                 photo_booth_masquerade_get_type          (void);
 PhotoBoothMasquerade *photo_booth_masquerade_new               (void);
-void                  photo_booth_masquerade_init_masks        (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gint print_width, gint print_height);
+void                  photo_booth_masquerade_init_masks        (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor);
 void                  photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstStructure *structure);
 
 G_END_DECLS
