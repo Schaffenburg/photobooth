@@ -392,7 +392,7 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->imgur_album_id);
 	g_free (priv->imgur_access_token);
 	g_free (priv->imgur_description);
-  g_free (priv->twitter_bridge_host);
+	g_free (priv->twitter_bridge_host);
 	g_free (priv->masks_dir);
 	g_free (priv->masks_json);
 	if (priv->masquerade)
@@ -1148,24 +1148,28 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 		GstPad *masksinkpad, *masksrcpad;
     GstElement *maskbin = gst_element_factory_make ("bin", "photo-mask-bin");
 		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-photoconvert");
-		GstElement *photo_faceoverlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-faceoverlay");
+		gchar *overlay_name = g_strdup_printf (PHOTO_MASKOVERLAY_NAME_TEMPLATE, 0);
+		GstElement *photo_maskoverlay = gst_element_factory_make ("gdkpixbufoverlay", overlay_name);
+		g_free (overlay_name);
 		g_assert (maskbin);
 		g_assert (detect_convert);
-		g_assert (photo_faceoverlay);
-		gboolean ret = gst_bin_add (GST_BIN (maskbin), photo_faceoverlay);
+		g_assert (photo_maskoverlay);
+		gboolean ret = gst_bin_add (GST_BIN (maskbin), photo_maskoverlay);
 		g_assert (ret);
 		gst_bin_add_many (GST_BIN (photo_bin), detect_convert, photo_facedetect, NULL);
 		g_object_set (G_OBJECT (photo_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
-		pad = gst_element_get_static_pad (photo_faceoverlay, "sink");
+		pad = gst_element_get_static_pad (photo_maskoverlay, "sink");
 		g_assert (pad);
 		masksinkpad = gst_ghost_pad_new ("sink", pad);
 		g_assert (masksinkpad);
+		gst_element_add_pad (GST_ELEMENT (maskbin), masksinkpad);
 		gst_pad_set_active (masksinkpad, TRUE);
 		gst_object_unref (pad);
-		pad = gst_element_get_static_pad (photo_faceoverlay, "src");
+		pad = gst_element_get_static_pad (photo_maskoverlay, "src");
 		g_assert (pad);
 		masksrcpad = gst_ghost_pad_new ("src", pad);
 		g_assert (masksrcpad);
+		gst_element_add_pad (GST_ELEMENT (maskbin), masksrcpad);
 		gst_pad_set_active (masksrcpad, TRUE);
 		gst_object_unref (pad);
 		ret = gst_bin_add (GST_BIN (photo_bin), maskbin);
@@ -1319,17 +1323,27 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		}
 		case GST_MESSAGE_ELEMENT:
 		{
+			if (!priv->masquerade)
+				break;
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
-			if (/*(priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_COUNTDOWN || priv->state == PB_STATE_PROCESS_PHOTO) && */structure && strcmp (gst_structure_get_name (structure), "facedetect") == 0 && priv->masquerade)
+			if (!structure || strcmp (gst_structure_get_name (structure), "facedetect"))
+				break;
+			GstElement *maskbin = NULL;
+			if (priv->state == PB_STATE_TAKING_PHOTO || priv->state == PB_STATE_PROCESS_PHOTO || priv->state == PB_STATE_ASK_PRINT)
 			{
-				GstStructure *new_s = gst_structure_copy (structure);
-				gst_structure_set (new_s, "masq", G_TYPE_POINTER, priv->masquerade, NULL);
-				gst_structure_set (new_s, "element", G_TYPE_POINTER, src, NULL);
-				gst_structure_set (new_s, "state", G_TYPE_INT, priv->state, NULL);
-				photo_booth_masquerade_facedetect_update (new_s);
-				gst_structure_free (new_s);
+				GstObject *photobin;
+				photobin = gst_object_get_parent (src);
+				GST_DEBUG_OBJECT (src, "parent %" GST_PTR_FORMAT, photobin);
+				maskbin = gst_bin_get_by_name (GST_BIN (photobin), "photo-mask-bin");
+				GST_DEBUG_OBJECT (src, "maskbin %" GST_PTR_FORMAT, maskbin);
 			}
+			GstStructure *new_s = gst_structure_copy (structure);
+			gst_structure_set (new_s, "maskbin", G_TYPE_POINTER, maskbin, NULL);
+			gst_structure_set (new_s, "state", G_TYPE_INT, priv->state, NULL);
+			photo_booth_masquerade_facedetect_update (priv->masquerade, new_s);
+			gst_structure_free (new_s);
+// 			if (priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_COUNTDOWN) || priv->state == PB_STATE_PROCESS_PHOTO) &&  && strcmp (gst_structure_get_name (structure), "facedetect") && )
 			break;
 		}
 		default:
@@ -1399,7 +1413,7 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	if (priv->do_facedetect) {
 		GST_INFO_OBJECT (pb, "new masquerade fixed: %" GST_PTR_FORMAT, priv->win->fixed);
 		priv->masquerade = photo_booth_masquerade_new ();
-		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json);
+		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json, priv->print_width, priv->print_height);
 	}
 
 	return FALSE;
@@ -1787,7 +1801,7 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
 	gst_element_set_state ((priv->audio_pipeline), GST_STATE_READY);
 
 	gtk_widget_hide (GTK_WIDGET (priv->win->gtkgstwidget));
-	photo_booth_masquerade_faces_detected (priv->masquerade, NULL, priv->state);
+	photo_booth_masquerade_facedetect_update (priv->masquerade, NULL); // hide all masks
 
 	SEND_COMMAND (pb, CONTROL_PHOTO);
 
