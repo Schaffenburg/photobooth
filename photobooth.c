@@ -73,6 +73,7 @@ struct _PhotoBoothPrivate
 	GstBuffer         *print_buffer;
 	GtkPrintSettings  *printer_settings;
 	GMutex             processing_mutex;
+	gboolean           drop_thumbnails;
 
 	gint               preview_fps, preview_width, preview_height;
 	gboolean           cam_reeinit_before_snapshot, cam_reeinit_after_snapshot;
@@ -109,6 +110,7 @@ struct _PhotoBoothPrivate
 	gboolean           do_facedetect;
 	gchar              *masks_dir;
 	gchar              *masks_json;
+	GstElement         *mask_bin;
 
 	PhotoBoothLed     *led;
 };
@@ -181,6 +183,7 @@ static GstElement *build_video_bin (PhotoBooth *pb);
 static GstElement *build_photo_bin (PhotoBooth *pb);
 static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb);
 static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb);
+static GstPadProbeReturn photo_booth_drop_thumbnails (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb);
 static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data);
@@ -191,6 +194,7 @@ static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, 
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
 void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win);
+static void photo_booth_prepare_print (PhotoBooth *pb);
 static void photo_booth_print (PhotoBooth *pb);
 static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintContext *context, gpointer user_data);
 static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data);
@@ -702,6 +706,7 @@ static gboolean photo_booth_cam_init (CameraInfo **cam_info)
 		g_usleep (G_USEC_PER_SEC);
 	}
 	if (retval != GP_OK) {
+		GST_WARNING ("calling photo_booth_cam_close because retval != GP_OK");
 		photo_booth_cam_close (&(*cam_info));
 		return FALSE;
 	}
@@ -903,6 +908,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					{
 						state = CAPTURE_FAILED;
 						photo_booth_change_state (pb, PB_STATE_NONE);
+						GST_WARNING ("calling photo_booth_cam_close because Movie capture error");
 						photo_booth_cam_close (&pb->cam_info);
 					}
 					continue;
@@ -925,6 +931,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 				photo_booth_focus (pb->cam_info);
 			if (priv->cam_reeinit_before_snapshot)
 			{
+				GST_WARNING ("calling photo_booth_cam_close because cam_reeinit_before_snapshot");
 				photo_booth_cam_close (&pb->cam_info);
 				photo_booth_cam_init (&pb->cam_info);
 			}
@@ -984,7 +991,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 					break;
 				case CONTROL_REINIT:
 				{
-					GST_DEBUG_OBJECT (pb, "CONTROL_REINIT!");
+					GST_WARNING_OBJECT (pb, "CONTROL_REINIT!");
 					photo_booth_cam_close (&pb->cam_info);
 					photo_booth_cam_init (&pb->cam_info);
 					break;
@@ -998,9 +1005,7 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 		{
 			if (pb->cam_info)
 			{
-				GST_LOG_OBJECT (pb, "captured thread paused... close camera! %s", photo_booth_state_get_name (priv->state));
-				photo_booth_cam_close (&pb->cam_info);
-// 				photo_booth_flush_pipe (pb->video_fd);
+				GST_LOG_OBJECT (pb, "captured thread paused... %s", photo_booth_state_get_name (priv->state));
 			}
 			else
 				GST_LOG_OBJECT (pb, "captured thread paused... timeout. %s", photo_booth_state_get_name (priv->state));
@@ -1104,7 +1109,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *photo_bin;
-	GstElement *photo_source, *photo_decoder, *photo_freeze, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee, *photo_facedetect;
+	GstElement *photo_source, *photo_decoder, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee, *photo_facedetect;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
@@ -1113,11 +1118,14 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	photo_bin = gst_element_factory_make ("bin", "photo-bin");
 	photo_source = gst_element_factory_make ("appsrc", "photo-appsrc");
 	photo_decoder = gst_element_factory_make ("jpegdec", "photo-decoder");
-	photo_freeze = gst_element_factory_make ("imagefreeze", "photo-freeze");
 	photo_scale = gst_element_factory_make ("videoscale", "photo-scale");
 
+	pad = gst_element_get_static_pad (photo_decoder, "src");
+	gulong probeid = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, photo_booth_drop_thumbnails, pb, NULL);
+	g_assert (probeid);
+
 	photo_filter = gst_element_factory_make ("capsfilter", "photo-capsfilter");
-	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, priv->print_width, "height", G_TYPE_INT, priv->print_height, "framerate", GST_TYPE_FRACTION, 10, 1, NULL);
+	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, priv->print_width, "height", G_TYPE_INT, priv->print_height, NULL);
 	g_object_set (G_OBJECT (photo_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
@@ -1135,61 +1143,50 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	if (priv->do_facedetect)
 		photo_facedetect = gst_element_factory_make ("facedetect", "photo-facedetect");
 
-	if (!(photo_bin && photo_source && photo_decoder && photo_freeze && photo_scale && photo_filter && photo_overlay && photo_convert && photo_tee))
+	if (!(photo_bin && photo_source && photo_decoder && photo_scale && photo_filter && photo_overlay && photo_convert && photo_tee))
 	{
 		GST_ERROR_OBJECT (photo_bin, "Failed to make photobin pipeline element(s)");
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL);
+	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL);
 
 	if (photo_facedetect)
 	{
 		GstPad *masksinkpad, *masksrcpad;
-    GstElement *maskbin = gst_element_factory_make ("bin", "photo-mask-bin");
+    priv->mask_bin = gst_element_factory_make ("bin", "photo-mask-bin");
 		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-photoconvert");
 		gchar *overlay_name = g_strdup_printf (PHOTO_MASKOVERLAY_NAME_TEMPLATE, 0);
 		GstElement *photo_maskoverlay = gst_element_factory_make ("gdkpixbufoverlay", overlay_name);
 		g_free (overlay_name);
-		g_assert (maskbin);
+		g_assert (priv->mask_bin);
 		g_assert (detect_convert);
 		g_assert (photo_maskoverlay);
-		gboolean ret = gst_bin_add (GST_BIN (maskbin), photo_maskoverlay);
+		gboolean ret = gst_bin_add (GST_BIN (priv->mask_bin), photo_maskoverlay);
 		g_assert (ret);
-		gst_bin_add_many (GST_BIN (photo_bin), detect_convert, photo_facedetect, NULL);
 		g_object_set (G_OBJECT (photo_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
 		pad = gst_element_get_static_pad (photo_maskoverlay, "sink");
 		g_assert (pad);
 		masksinkpad = gst_ghost_pad_new ("sink", pad);
 		g_assert (masksinkpad);
-		gst_element_add_pad (GST_ELEMENT (maskbin), masksinkpad);
+		gst_element_add_pad (priv->mask_bin, masksinkpad);
 		gst_pad_set_active (masksinkpad, TRUE);
 		gst_object_unref (pad);
 		pad = gst_element_get_static_pad (photo_maskoverlay, "src");
 		g_assert (pad);
 		masksrcpad = gst_ghost_pad_new ("src", pad);
 		g_assert (masksrcpad);
-		gst_element_add_pad (GST_ELEMENT (maskbin), masksrcpad);
+		gst_element_add_pad (priv->mask_bin, masksrcpad);
 		gst_pad_set_active (masksrcpad, TRUE);
 		gst_object_unref (pad);
-		ret = gst_bin_add (GST_BIN (photo_bin), maskbin);
-		g_assert (ret);
-		GST_INFO_OBJECT (photo_bin, "now linking...");
-		ret = gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, NULL);
-		g_assert (ret);
-		pad = gst_element_get_static_pad (photo_overlay, "src");
-		ret = gst_pad_link (pad, masksinkpad);
-		g_assert (ret == GST_PAD_LINK_OK);
-		pad = gst_element_get_static_pad (photo_convert, "sink");
-		ret = gst_pad_link (masksrcpad, pad);
-		g_assert (ret == GST_PAD_LINK_OK);
-		ret = gst_element_link_many (photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL);
+		gst_bin_add_many (GST_BIN (photo_bin), priv->mask_bin, photo_facedetect, detect_convert, NULL);
+		ret = gst_element_link_many (photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, priv->mask_bin, photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL);
 		g_assert (ret);
 		GST_INFO_OBJECT (photo_bin, "facedetect plugin will be used!");
 	}
 	if (!photo_facedetect)
 	{
-		if (!gst_element_link_many (photo_source, photo_decoder, photo_freeze, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL))
+		if (!gst_element_link_many (photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL))
 		{
 			GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
 			return FALSE;
@@ -1274,8 +1271,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			GST_ERROR ("Error: %s : %s", err->message, debug);
 			g_error_free (err);
 			g_free (debug);
-
-			gtk_main_quit ();
+			photo_booth_quit_signal (pb);
 			break;
 		}
 		case GST_MESSAGE_EOS:
@@ -1329,18 +1325,10 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			structure = gst_message_get_structure (message);
 			if (!structure || strcmp (gst_structure_get_name (structure), "facedetect"))
 				break;
-			GstElement *maskbin = NULL;
-			if (priv->state == PB_STATE_TAKING_PHOTO || priv->state == PB_STATE_PROCESS_PHOTO || priv->state == PB_STATE_ASK_PRINT)
-			{
-				GstObject *photobin;
-				photobin = gst_object_get_parent (src);
-				GST_DEBUG_OBJECT (src, "parent %" GST_PTR_FORMAT, photobin);
-				maskbin = gst_bin_get_by_name (GST_BIN (photobin), "photo-mask-bin");
-				GST_DEBUG_OBJECT (src, "maskbin %" GST_PTR_FORMAT, maskbin);
-			}
+			gboolean is_video = g_str_has_prefix (GST_ELEMENT_NAME (src), "video");
 			GstStructure *new_s = gst_structure_copy (structure);
-			gst_structure_set (new_s, "maskbin", G_TYPE_POINTER, maskbin, NULL);
 			gst_structure_set (new_s, "state", G_TYPE_INT, priv->state, NULL);
+			gst_structure_set (new_s, "is-video", G_TYPE_BOOLEAN, is_video, NULL);
 			photo_booth_masquerade_facedetect_update (priv->masquerade, new_s);
 			gst_structure_free (new_s);
 // 			if (priv->state == PB_STATE_PREVIEW || priv->state == PB_STATE_COUNTDOWN) || priv->state == PB_STATE_PROCESS_PHOTO) &&  && strcmp (gst_structure_get_name (structure), "facedetect") && )
@@ -1753,7 +1741,6 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
-// 	photo_booth_window_face_detected (priv->win, NULL);
 
 	if (priv->countdown > 1)
 	{
@@ -1801,7 +1788,8 @@ static gboolean photo_booth_snapshot_trigger (PhotoBooth *pb)
 	gst_element_set_state ((priv->audio_pipeline), GST_STATE_READY);
 
 	gtk_widget_hide (GTK_WIDGET (priv->win->gtkgstwidget));
-	photo_booth_masquerade_facedetect_update (priv->masquerade, NULL); // hide all masks
+	if (priv->masquerade)
+		photo_booth_masquerade_facedetect_update (priv->masquerade, NULL); // hide all masks
 
 	SEND_COMMAND (pb, CONTROL_PHOTO);
 
@@ -1891,12 +1879,28 @@ fail:
 	return FALSE;
 }
 
-static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
+static void photo_booth_push_photo_buffer (PhotoBooth *pb)
 {
-	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	GstElement *appsrc;
 	GstBuffer *buffer;
 	GstFlowReturn flowret;
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+
+	appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
+	buffer = gst_buffer_new_wrapped (pb->cam_info->data, pb->cam_info->size);
+	g_signal_emit_by_name (appsrc, "push-buffer", buffer, &flowret);
+	GST_DEBUG_OBJECT (appsrc, "PUSHING %" GST_PTR_FORMAT " to appsrc", buffer);
+
+	if (flowret != GST_FLOW_OK)
+		GST_ERROR_OBJECT (appsrc, "couldn't push %" GST_PTR_FORMAT " to appsrc", buffer);
+	gst_object_unref (appsrc);
+
+	priv->drop_thumbnails = FALSE;
+}
+
+static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	GstPad *pad;
 
 	gst_element_set_state (pb->video_bin, GST_STATE_READY);
@@ -1920,19 +1924,25 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	GST_DEBUG_OBJECT (pb, "photo_booth_snapshot_taken size=%lu photos_taken=%i", pb->cam_info->size, priv->photos_taken);
 	gtk_label_set_text (priv->win->status, _("Processing photo..."));
 
-	appsrc = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-appsrc");
-	buffer = gst_buffer_new_wrapped (pb->cam_info->data, pb->cam_info->size);
-	g_signal_emit_by_name (appsrc, "push-buffer", buffer, &flowret);
-
-	if (flowret != GST_FLOW_OK)
-		GST_ERROR_OBJECT (appsrc, "couldn't push %" GST_PTR_FORMAT " to appsrc", buffer);
-	gst_object_unref (appsrc);
+	photo_booth_push_photo_buffer (pb);
 
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 	pad = gst_element_get_static_pad (pb->photo_bin, "src");
 	priv->photo_block_id = gst_pad_add_probe (pad, GST_PAD_PROBE_TYPE_BUFFER, photo_booth_catch_photo_buffer, pb, NULL);
 
 	return FALSE;
+}
+
+static GstPadProbeReturn photo_booth_drop_thumbnails (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+{
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	GST_DEBUG_OBJECT (pb, "probe function payload: %" GST_PTR_FORMAT " drop_thumbnails=%i", gst_pad_probe_info_get_buffer (info), priv->drop_thumbnails);
+	if (priv->drop_thumbnails)
+		return GST_PAD_PROBE_DROP;
+
+	priv->drop_thumbnails = TRUE;
+	return GST_PAD_PROBE_PASS;
 }
 
 static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
@@ -1942,39 +1952,66 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 	GstPadProbeReturn ret = GST_PAD_PROBE_PASS;
 	priv = photo_booth_get_instance_private (pb);
 
-	GST_LOG_OBJECT (pb, "probe function in state %s... locking", photo_booth_state_get_name (priv->state));
+	GST_DEBUG_OBJECT (pb, "probe function in state %s... locking payload: %" GST_PTR_FORMAT, photo_booth_state_get_name (priv->state), gst_pad_probe_info_get_buffer (info));
 	g_mutex_lock (&priv->processing_mutex);
 	switch (priv->state) {
 		case PB_STATE_TAKING_PHOTO:
 		{
-			if (priv->cam_reeinit_after_snapshot)
-				SEND_COMMAND (pb, CONTROL_REINIT);
-			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
-			GST_DEBUG_OBJECT (pb, "first buffer caught -> display in sink, invoke processing");
+			GST_DEBUG_OBJECT (pb, "PB_STATE_TAKING_PHOTO first buffer caught -> display in sink");
 			if (priv->print_copies_max)
 			{
 				gtk_widget_show (GTK_WIDGET (priv->win->button_print));
 			}
-			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
+
+			gtk_widget_hide (GTK_WIDGET (priv->win->image));
+			gtk_widget_show (GTK_WIDGET (priv->win->gtkgstwidget));
+			if (priv->print_copies_min != priv->print_copies_max) {
+				photo_booth_window_set_copies_show (priv->win, priv->print_copies_min, priv->print_copies_max, priv->print_copies_default);
+			}
+			photo_booth_window_set_spinner (priv->win, FALSE);
+
+			if (priv->masquerade) {
+				photo_booth_change_state (pb, PB_STATE_MASQUERADE_PHOTO);
+				GST_DEBUG_OBJECT (pb, "waiting for user to place masks");
+			} else {
+				photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
+				GST_DEBUG_OBJECT (pb, "no masquerade, invoke processing...");
+				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
+			}
 			if (priv->preview_timeout > 0)
 				priv->preview_timeout_id = g_timeout_add_seconds (priv->preview_timeout, (GSourceFunc) photo_booth_cancel, pb);
 			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
 			break;
 		}
+		case PB_STATE_MASQUERADE_PHOTO:
+		{
+			GST_DEBUG_OBJECT (pb, "PB_STATE_MASQUERADE_PHOTO next buffer caught -> invoke processing");
+			photo_booth_change_state (pb, PB_STATE_PROCESS_PHOTO);
+			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
+			break;
+		}
 		case PB_STATE_PROCESS_PHOTO:
 		{
+			GST_DEBUG_OBJECT (pb, "PB_STATE_PROCESS_PHOTO: next buffer caught -> will be caught for printing. waiting for answer, hide spinner");
 			photo_booth_change_state (pb, PB_STATE_ASK_PRINT);
-			GST_DEBUG_OBJECT (pb, "second buffer caught -> will be caught for printing. waiting for answer, hide spinner");
-			if (priv->print_copies_min != priv->print_copies_max)
-				photo_booth_window_set_copies_show (priv->win, priv->print_copies_min, priv->print_copies_max, priv->print_copies_default);
-			photo_booth_window_set_spinner (priv->win, FALSE);
+// 			if (!priv->masquerade) {
+				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_push_photo_buffer, pb);
+// 			}
 			break;
 		}
 		case PB_STATE_ASK_PRINT:
 		{
-			GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe");
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
+			if (priv->masquerade) {
+				GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe and open print dialoge");
+				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_print, pb);
+				photo_booth_masquerade_clear_mask_bin (priv->masquerade, priv->mask_bin);
+			} else {
+				GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe");
+			}
+			if (priv->cam_reeinit_after_snapshot)
+				SEND_COMMAND (pb, CONTROL_REINIT);
 			ret = GST_PAD_PROBE_REMOVE;
 			break;
 		}
@@ -1994,7 +2031,6 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 
 	GST_DEBUG_OBJECT (pb, "plugging photo processing elements. locking...");
 	g_mutex_lock (&priv->processing_mutex);
-	encoder = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-encoder");
 	tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
 
 	encoder = gst_element_factory_make ("jpegenc", "photo-encoder");
@@ -2051,8 +2087,16 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	g_signal_connect (appsink, "new-sample", G_CALLBACK (photo_booth_catch_print_buffer), pb);
 
 	gst_object_unref (tee);
+
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
+
+	if (priv->masquerade) {
+		photo_booth_masquerade_create_overlays (priv->masquerade, priv->mask_bin);
+	}	else {}
+
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_process_photo_plug_elements");
+
+	photo_booth_push_photo_buffer (pb);
 
 	g_mutex_unlock (&priv->processing_mutex);
 	GST_DEBUG_OBJECT (pb, "plugged photo processing elements and unlocked.");
@@ -2094,25 +2138,30 @@ static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 	tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
 	encoder = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-encoder");
 	filesink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-filesink");
-	gst_element_unlink_many (tee, encoder, filesink, NULL);
+	if (encoder && filesink) {
+		gst_element_unlink_many (tee, encoder, filesink, NULL);
+		gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, NULL);
+		gst_element_set_state (filesink, GST_STATE_NULL);
+		gst_element_set_state (encoder, GST_STATE_NULL);
+		gst_object_unref (encoder);
+		gst_object_unref (filesink);
+	}
 
 	appsink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-appsink");
-	lcms = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-lcms");
-	if (lcms)
-	{
-		gst_element_unlink_many (tee, lcms, appsink, NULL);
-		gst_element_set_state (lcms, GST_STATE_READY);
+	if (appsink) {
+		lcms = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-lcms");
+		if (lcms) {
+			gst_element_unlink_many (tee, lcms, appsink, NULL);
+			gst_element_set_state (lcms, GST_STATE_READY);
+		} else {
+			gst_element_unlink (tee, appsink);
+		}
+		gst_bin_remove (GST_BIN (pb->photo_bin), appsink);
+		gst_element_set_state (appsink, GST_STATE_NULL);
 	}
-	else
-		gst_element_unlink (tee, appsink);
 
-	gst_bin_remove_many (GST_BIN (pb->photo_bin), encoder, filesink, appsink, NULL);
-	gst_element_set_state (filesink, GST_STATE_NULL);
-	gst_element_set_state (encoder, GST_STATE_NULL);
-	gst_element_set_state (appsink, GST_STATE_NULL);
 	gst_object_unref (tee);
-	gst_object_unref (encoder);
-	gst_object_unref (filesink);
+
 	priv->photo_block_id = 0;
 
 	g_mutex_unlock (&priv->processing_mutex);
@@ -2146,6 +2195,10 @@ void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
 		_play_event_sound (priv, ACK_SOUND);
 		photo_booth_print (pb);
 	}
+	if (priv->state == PB_STATE_MASQUERADE_PHOTO) {
+		_play_event_sound (priv, ACK_SOUND);
+		photo_booth_prepare_print (pb);
+	}
 }
 
 void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win)
@@ -2178,6 +2231,9 @@ void photo_booth_cancel (PhotoBooth *pb)
 	priv = photo_booth_get_instance_private (pb);
 	GST_INFO_OBJECT (pb, "cancelled in state %s", photo_booth_state_get_name (priv->state));
 	switch (priv->state) {
+		case PB_STATE_MASQUERADE_PHOTO:
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+			photo_booth_window_get_copies_hide (priv->win);
 		case PB_STATE_PROCESS_PHOTO:
 			photo_booth_process_photo_remove_elements (pb);
 		case PB_STATE_TAKING_PHOTO:
@@ -2209,6 +2265,13 @@ void photo_booth_copies_value_changed (GtkRange *range, PhotoBoothWindow *win)
 }
 
 #define ALWAYS_PRINT_DIALOG 1
+
+static void photo_booth_prepare_print (PhotoBooth *pb)
+{
+// 	PhotoBoothPrivate *priv;
+// 	priv = photo_booth_get_instance_private (pb);
+	photo_booth_push_photo_buffer (pb);
+}
 
 static void photo_booth_print (PhotoBooth *pb)
 {
@@ -2536,6 +2599,7 @@ const gchar* photo_booth_state_get_name (PhotoboothState state)
 		case PB_STATE_PREVIEW_COOLDOWN: return "PB_STATE_PREVIEW_COOLDOWN";
 		case PB_STATE_COUNTDOWN: return "PB_STATE_COUNTDOWN";
 		case PB_STATE_TAKING_PHOTO: return "PB_STATE_TAKING_PHOTO";
+		case PB_STATE_MASQUERADE_PHOTO: return "PB_STATE_MASQUERADE_PHOTO";
 		case PB_STATE_PROCESS_PHOTO: return "PB_STATE_PROCESS_PHOTO";
 		case PB_STATE_ASK_PRINT: return "PB_STATE_ASK_PRINT";
 		case PB_STATE_PRINTING: return "PB_STATE_PRINTING";

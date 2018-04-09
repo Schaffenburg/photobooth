@@ -13,6 +13,7 @@
  * distributed other than under the conditions noted above.
  */
 
+#include <gst/video/gstvideosink.h>
 #include "photobooth.h"
 #include "photoboothmasquerade.h"
 
@@ -31,6 +32,7 @@ struct _PhotoBoothMask
 {
 	GstObject parent;
 	guint index;
+	gboolean active;
 	gchar *filename;
 	GtkFixed *fixed;
 	GdkPixbuf *pixbuf;
@@ -40,6 +42,7 @@ struct _PhotoBoothMask
 	gdouble print_scaling_factor;
 	gboolean dragging;
 	gint dragstartoffsetx, dragstartoffsety;
+	GstVideoRectangle print_rectangle;
 };
 
 struct _PhotoBoothMaskClass
@@ -51,6 +54,11 @@ G_DEFINE_TYPE (PhotoBoothMask, photo_booth_mask, G_TYPE_OBJECT);
 
 GST_DEBUG_CATEGORY_STATIC (photo_booth_masquerade_debug);
 #define GST_CAT_DEFAULT photo_booth_masquerade_debug
+
+static void photo_booth_mask_connect_events (PhotoBoothMask *mask, gpointer press, gpointer release, gpointer motion);
+static void photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *mask_bin);
+static void photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *structure);
+static void photo_booth_mask_hide (PhotoBoothMask *mask);
 
 gboolean photo_booth_masquerade_press   (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
 gboolean photo_booth_masquerade_release (GtkWidget *widget, GdkEventButton *event, gpointer user_data);
@@ -95,25 +103,48 @@ photo_booth_mask_connect_events (PhotoBoothMask *mask, gpointer press, gpointer 
 }
 
 static void
-photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *maskbin, guint width, guint height, guint offset_x, guint offset_y)
+photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *mask_bin)
 {
 	GstPad *ghost_srcpad;
 	GstPad *prev_srcpad, *new_sinkpad, *new_srcpad;
 	gchar *element_name;
 	GstElement *photo_overlay = NULL;
+	guint width, height, x, y;
 
-	GST_DEBUG_OBJECT (mask, "mask [%d] create overlay of size (%dx%d) @ (%d, %d)", mask->index, width, height, offset_x, offset_y);
+	width = mask->print_rectangle.w;
+	height = mask->print_rectangle.h;
+
+	GValue pos = G_VALUE_INIT;
+	g_value_init (&pos, G_TYPE_INT);
+	gtk_container_child_get_property (GTK_CONTAINER (mask->fixed), GTK_WIDGET (mask->eventw), "x", &pos);
+	x = g_value_get_int (&pos);
+
+	g_value_reset (&pos);
+	gtk_container_child_get_property (GTK_CONTAINER (mask->fixed), GTK_WIDGET (mask->eventw), "y", &pos);
+	y = g_value_get_int (&pos);
+
+	GST_DEBUG_OBJECT (mask, "mask [%d] original widget size (%dx%d) @ (%d, %d)", mask->index, width, height, x, y);
+
+	// convert screen widget's coordinates, size and offset to print values
+	width = (gdouble) width / mask->print_scaling_factor;
+	height = (gdouble) height / mask->print_scaling_factor;
+	gdouble video_scaling_factor = (gdouble) width / (gdouble) gdk_pixbuf_get_width (mask->pixbuf);
+	x = (gdouble) ((x - mask->screen_offset_x) - (gdouble) mask->offset_x * video_scaling_factor * mask->print_scaling_factor) / mask->print_scaling_factor;
+	y = (gdouble) ((y - mask->screen_offset_y) - (gdouble) mask->offset_y * video_scaling_factor * mask->print_scaling_factor) / mask->print_scaling_factor;
+
+	GST_DEBUG_OBJECT (mask, "mask->screen_offset_y=%d, mask->offset_y=%d", mask->screen_offset_y, mask->offset_y);
+	GST_DEBUG_OBJECT (mask, "mask [%d] scaled   widget size (%dx%d) @ (%d, %d)", mask->index, width, height, x, y);
 
 	element_name = g_strdup_printf (PHOTO_MASKOVERLAY_NAME_TEMPLATE, mask->index);
-	if (mask->index == 0) {
-		photo_overlay = gst_bin_get_by_name (GST_BIN (maskbin), element_name);
+	photo_overlay = gst_bin_get_by_name (GST_BIN (mask_bin), element_name);
+	if (photo_overlay) {
 		GST_DEBUG_OBJECT (mask, "using existing photo_overlay element %" GST_PTR_FORMAT, photo_overlay);
 	} else {
 		photo_overlay = gst_element_factory_make ("gdkpixbufoverlay", element_name);
 		GST_DEBUG_OBJECT (mask, "created new photo_overlay element %" GST_PTR_FORMAT, photo_overlay);
-		int ret = gst_bin_add (GST_BIN (maskbin), photo_overlay);
+		int ret = gst_bin_add (GST_BIN (mask_bin), photo_overlay);
 		g_assert (ret);
-		ghost_srcpad = gst_element_get_static_pad (maskbin, "src");
+		ghost_srcpad = gst_element_get_static_pad (mask_bin, "src");
 		prev_srcpad = gst_ghost_pad_get_target (GST_GHOST_PAD (ghost_srcpad));
 		new_sinkpad = gst_element_get_static_pad (photo_overlay, "sink");
 		new_srcpad = gst_element_get_static_pad (photo_overlay, "src");
@@ -121,29 +152,31 @@ photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *maskbin, guin
 		g_assert (ret);
 		GstPadLinkReturn lret = gst_pad_link (prev_srcpad, new_sinkpad);
 		g_assert (lret == GST_PAD_LINK_OK);
-		gst_element_sync_state_with_parent (photo_overlay);
 	}
 
 	g_object_set (photo_overlay, "pixbuf", mask->pixbuf,
 	                             "overlay-width", width,
 	                             "overlay-height", height,
-	                             "offset-x", offset_x,
-	                             "offset-y", offset_y,
+	                             "offset-x", x,
+	                             "offset-y", y,
 	                             NULL);
+
+	photo_booth_mask_hide (mask);
+
 	g_free (element_name);
 }
 
 static void
 photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *structure)
 {
-	GstElement *maskbin = NULL;
 	int state;
+	gboolean is_video;
 
 	if (!mask->imagew || !structure || !face)
 		return;
 
-	gst_structure_get (structure, "maskbin", G_TYPE_POINTER, &maskbin, NULL);
 	gst_structure_get_int (structure, "state", &state);
+	gst_structure_get_boolean (structure, "is-video", &is_video);
 
 	const GstStructure *face_struct = gst_value_get_structure (face);
 	GdkPixbuf *scaled_mask_pixbuf;
@@ -157,7 +190,7 @@ photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *s
 
 	video_scaling_factor = (gdouble) width / (gdouble) gdk_pixbuf_get_width (mask->pixbuf);
 
-	if (!GST_IS_ELEMENT (maskbin)) { // Preview Video
+	if (is_video) {
 		height = (gdouble) gdk_pixbuf_get_height (mask->pixbuf) * video_scaling_factor;
 		x += mask->screen_offset_x + (gdouble) mask->offset_x * video_scaling_factor;
 		y += mask->screen_offset_y + (gdouble) mask->offset_y * video_scaling_factor;
@@ -167,26 +200,29 @@ photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *s
 		width = (gdouble) width * mask->print_scaling_factor;
 		height = (gdouble) gdk_pixbuf_get_height (mask->pixbuf) * video_scaling_factor * mask->print_scaling_factor;
 		x = (gdouble) x * mask->print_scaling_factor + mask->screen_offset_x + (gdouble) mask->offset_x * video_scaling_factor * mask->print_scaling_factor;
-		y = (gdouble) y * mask->print_scaling_factor + mask->screen_offset_y + (gdouble)mask->offset_y * video_scaling_factor * mask->print_scaling_factor;
+		y = (gdouble) y * mask->print_scaling_factor + mask->screen_offset_y + (gdouble) mask->offset_y * video_scaling_factor * mask->print_scaling_factor;
 		GST_DEBUG_OBJECT (mask, "PHOTO mask size: (%dx%d) (print scaling factor=%.2f) position: (%d,%d) state: (%s)", width, height, mask->print_scaling_factor, x, y, photo_booth_state_get_name (state));
+		mask->print_rectangle.w = width;
+		mask->print_rectangle.h = height;
 		photo_booth_mask_connect_events (mask, photo_booth_masquerade_press, photo_booth_masquerade_release, photo_booth_masquerade_motion);
-		photo_booth_mask_create_overlay (mask, maskbin, width, height, x, y);
 	}
 	gtk_fixed_move (mask->fixed, mask->eventw, x, y);
 	scaled_mask_pixbuf = gdk_pixbuf_scale_simple (mask->pixbuf, width, height, GDK_INTERP_BILINEAR);
 	gtk_image_set_from_pixbuf (GTK_IMAGE (mask->imagew), scaled_mask_pixbuf);
 	gtk_widget_show (mask->eventw);
 	gtk_widget_show (mask->imagew);
+	mask->active = TRUE;
 }
 
 static void
 photo_booth_mask_hide (PhotoBoothMask *mask)
 {
-	GST_TRACE_OBJECT (mask, "mask hide!");
-	if (!mask->imagew)
+	if (!mask->active || !mask->imagew)
 		return;
+	GST_DEBUG_OBJECT (mask, "mask hide!");
 	gtk_widget_hide (mask->eventw);
 	gtk_widget_hide (mask->imagew);
+	mask->active = FALSE;
 }
 
 static PhotoBoothMask *
@@ -198,6 +234,7 @@ photo_booth_mask_new (guint index, GtkFixed *fixed, gchar *filename, gint offset
 
 	mask->index = index;
 	mask->filename = filename;
+	mask->active = FALSE;
 	mask->fixed = g_object_ref (fixed);
 	mask->pixbuf = gdk_pixbuf_new_from_file_at_scale (filename, -1, -1, FALSE, &error);
 	mask->offset_x = offset_x;
@@ -269,26 +306,23 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 		const gchar *filename;
 		gint offset_x, offset_y;
 		PhotoBoothMask *mask;
+		gchar *maskpath;
 
 		if (!json_reader_read_element (reader, i))
 			goto fail;
-
 		if (!json_reader_read_element (reader, 0))
 			goto fail;
 		filename = json_reader_get_string_value (reader);
 		json_reader_end_element (reader);
-
 		if (!json_reader_read_element (reader, 1))
 			goto fail;
 		offset_x = json_reader_get_int_value (reader);
 		json_reader_end_element (reader);
-
 		if (!json_reader_read_element (reader, 2))
 			goto fail;
 		offset_y = json_reader_get_int_value (reader);
 		json_reader_end_element (reader);
-
-		gchar *maskpath = g_strconcat (dir, filename, NULL);
+		maskpath = g_strconcat (dir, filename, NULL);
 		mask = photo_booth_mask_new (i, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
 		masq->masks = g_list_append (masq->masks, mask);
 		g_free (maskpath);
@@ -323,12 +357,19 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	const GValue *faces = NULL;
 	int state = 0;
 
-	GST_DEBUG ("photo_booth_masquerade_facedetect_update");
 	if (structure) {
 		faces = gst_structure_get_value (structure, "faces");
 		gst_structure_get_int (structure, "state", &state);
+	} else {
+		GST_WARNING ("GstStructure missing for face detection!");
 	}
 	n_masks = g_list_length (masq->masks);
+
+	if ((PhotoboothState) state > PB_STATE_TAKING_PHOTO)
+	{
+		GST_LOG ("don't do update in state %s!", photo_booth_state_get_name ((PhotoboothState) state));
+		return;
+	}
 
 	if (GST_VALUE_HOLDS_LIST (faces) /*&& gst_debug_category_get_threshold (photo_booth_masquerade_debug) > GST_LEVEL_TRACE*/)
 	{
@@ -344,7 +385,7 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 		sorted_faces = g_list_insert_sorted_with_data (sorted_faces, (GValue *) face, (GCompareDataFunc) _pbm_sort_faces_by_xpos, NULL);
 	}
 
-	if ((PhotoboothState) state >= PB_STATE_PROCESS_PHOTO)
+	if ((PhotoboothState) state == PB_STATE_TAKING_PHOTO)
 	{
 		sorted_faces = g_list_reverse (sorted_faces);
 	}
@@ -364,13 +405,59 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	}
 }
 
+void
+photo_booth_masquerade_create_overlays (PhotoBoothMasquerade *masq, GstElement *mask_bin)
+{
+	GList *m;
+	GST_DEBUG ("photo_booth_masquerade_create_overlays");
+	for (m = masq->masks; m != NULL; m = m->next) {
+		if (PHOTO_BOOTH_MASK (m->data)->active) {
+			photo_booth_mask_create_overlay (m->data, mask_bin);
+		}
+	}
+}
+
+void
+photo_booth_masquerade_clear_mask_bin (PhotoBoothMasquerade *masq, GstElement *mask_bin)
+{
+	GstIterator *iter = NULL;
+	GValue value = { 0 };
+	GstElement *elem = NULL;
+	gboolean done = FALSE;
+	GST_DEBUG ("clearing mask bin!");
+
+	iter = gst_bin_iterate_elements (GST_BIN (mask_bin));
+	while (!done) {
+		switch (gst_iterator_next (iter, &value)) {
+			case GST_ITERATOR_OK:
+				elem = (GstElement *) g_value_get_object (&value);
+				g_object_set (elem, "pixbuf", NULL, NULL);
+				GST_DEBUG_OBJECT (elem, "unsetting pixbuf property");
+				/* Iterator increased the element refcount, so unref */
+				g_value_unset (&value);
+				break;
+			case GST_ITERATOR_RESYNC:
+				gst_iterator_resync (iter);
+				break;
+			case GST_ITERATOR_ERROR:
+				GST_WARNING_OBJECT (mask_bin, "error in iterating elements");
+				done = TRUE;
+				break;
+			case GST_ITERATOR_DONE:
+				done = TRUE;
+				break;
+		}
+	}
+	gst_iterator_free (iter);
+}
+
 gboolean photo_booth_masquerade_press (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
 {
 	PhotoBoothMask *mask = PHOTO_BOOTH_MASK (user_data);
 	GtkWidget* p;
 	gint widgetoffsetx, widgetoffsety, screenoffsetx, screenoffsety;
 
-	GST_INFO_OBJECT (widget, "MASK PRESS");
+	GST_TRACE_OBJECT (widget, "MASK PRESS");
 
 	mask->dragging = TRUE;
 	p = gtk_widget_get_parent (widget);
@@ -379,6 +466,7 @@ gboolean photo_booth_masquerade_press (GtkWidget *widget, GdkEventButton *event,
 	p = gtk_widget_get_parent (p);
 	gdk_window_get_position (gtk_widget_get_parent_window (p), &screenoffsetx, &screenoffsety);
 
+	GST_INFO_OBJECT (mask, "MASK PRESS event event (%.0f,%.0f) widget offsets (%d,%d)", event->x, event->y, widgetoffsetx, widgetoffsety);
 	mask->dragstartoffsetx = (int)event->x + widgetoffsetx + mask->screen_offset_x;
 	mask->dragstartoffsety = (int)event->y + widgetoffsety + mask->screen_offset_y;
 
@@ -389,8 +477,9 @@ gboolean photo_booth_masquerade_release (GtkWidget *widget, GdkEventButton *even
 {
 	PhotoBoothMask *mask = PHOTO_BOOTH_MASK (user_data);
 
-	if (mask)
+	if (mask) {
 		mask->dragging = FALSE;
+	}
 
 	return TRUE;
 }
@@ -399,7 +488,7 @@ gboolean photo_booth_masquerade_motion (GtkWidget *widget, GdkEventMotion *event
 {
 	PhotoBoothMask *mask = PHOTO_BOOTH_MASK (user_data);
 
-	GST_TRACE_OBJECT (mask, "event (%.0f,%.0f) root (%d,%d) off", event->x, event->y, (int)event->x_root, (int)event->y_root);
+	GST_INFO_OBJECT (mask, "event (%.0f,%.0f) root (%d,%d) off", event->x, event->y, (int)event->x_root, (int)event->y_root);
 
 	if (!mask)
 		return TRUE;

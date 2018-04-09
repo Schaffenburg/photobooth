@@ -45,6 +45,8 @@ GType                 photo_booth_masquerade_get_type          (void);
 PhotoBoothMasquerade *photo_booth_masquerade_new               (void);
 void                  photo_booth_masquerade_init_masks        (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor);
 void                  photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstStructure *structure);
+void                  photo_booth_masquerade_create_overlays   (PhotoBoothMasquerade *masq, GstElement *mask_bin);
+void                  photo_booth_masquerade_clear_mask_bin    (PhotoBoothMasquerade *masq, GstElement *mask_bin);
 
 G_END_DECLS
 

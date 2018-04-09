@@ -28,8 +28,6 @@ struct _PhotoBoothWindowPrivate
 	GtkLabel *countdown_label;
 	GtkScale *copies;
 	gint countdown;
-	gboolean dragging;
-	gint screenoffset_x, screenoffset_y;
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLICATION_WINDOW);
@@ -104,9 +102,6 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_button_set_label (win->button_print, _("Print photo"));
 	gtk_button_set_label (win->button_upload, _("Upload photo"));
 	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
-
-	gtk_widget_set_has_window (GTK_WIDGET (win->fixed), TRUE);
-	priv->dragging = FALSE;
 }
 
 static void photo_booth_window_dispose (GObject *object)
