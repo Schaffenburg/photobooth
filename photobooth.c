@@ -1109,7 +1109,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *photo_bin;
-	GstElement *photo_source, *photo_decoder, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee, *photo_facedetect;
+	GstElement *photo_source, *photo_decoder, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee, *photo_facedetect = NULL;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
 
