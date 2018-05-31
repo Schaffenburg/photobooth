@@ -37,11 +37,15 @@
 #include "photoboothled.h"
 #include "photoboothmasquerade.h"
 
+#include <glib/gstdio.h>
 #include <gio/gio.h>
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
 
 #define photo_booth_parent_class parent_class
+
+typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
+typedef enum { SAVE_NEVER, SAVE_ASK, SAVE_PRINTED, SAVE_ALL } save_t;
 
 typedef struct _PhotoBoothPrivate PhotoBoothPrivate;
 
@@ -60,6 +64,7 @@ struct _PhotoBoothPrivate
 	gulong             preview_timeout_id;
 	gchar             *overlay_image;
 
+	save_t             do_save_photos;
 	gchar             *save_path_template;
 	guint              photos_taken, photos_printed;
 	guint              save_filename_count;
@@ -119,6 +124,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_CONFIG "default.ini"
 #define PREVIEW_FPS 19
 #define DEFAULT_COUNTDOWN 5
+#define DEFAULT_SAVE_PHOTOS SAVE_NEVER
 #define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
 #define DEFAULT_FLIP TRUE
@@ -132,8 +138,6 @@ struct _PhotoBoothPrivate
 #define IMGUR_UPLOAD_URI "https://api.imgur.com/3/upload"
 #define DEFAULT_TWITTER_BRIDGE_HOST NULL
 #define DEFAULT_TWITTER_BRIDGE_PORT 0
-
-typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION)
 
@@ -190,6 +194,7 @@ static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpoin
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb);
 static void photo_booth_free_print_buffer (PhotoBooth *pb);
 static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
+static gboolean photo_booth_preview_timedout (PhotoBooth *pb);
 
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
@@ -516,6 +521,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				g_free (screensaverfile);
 				g_free (screensaverabsfilename);
 			}
+			READ_INT_INI_KEY (priv->do_save_photos, gkf, "general", "save_photos");
 			READ_STR_INI_KEY (save_path_template, gkf, "general", "save_path_template");
 			if (save_path_template)
 			{
@@ -677,6 +683,15 @@ void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
 	}
 	if (soundfile)
 		ca_context_play (ca_gtk_context_get(), 0, CA_PROP_MEDIA_FILENAME, soundfile, NULL);
+}
+
+static void photo_booth_delete_file (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	const gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+	if (g_unlink (filename)) {
+		GST_ERROR_OBJECT (pb, "error deleting file '%s': %s (%i)", filename, strerror(errno), errno);
+	}
 }
 
 static gboolean photo_booth_cam_init (CameraInfo **cam_info)
@@ -1979,7 +1994,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_plug_elements, pb);
 			}
 			if (priv->preview_timeout > 0)
-				priv->preview_timeout_id = g_timeout_add_seconds (priv->preview_timeout, (GSourceFunc) photo_booth_cancel, pb);
+				priv->preview_timeout_id = g_timeout_add_seconds (priv->preview_timeout, (GSourceFunc) photo_booth_preview_timedout, pb);
 			gtk_widget_show (GTK_WIDGET (priv->win->button_cancel));
 			photo_booth_window_show_cursor (priv->win);
 			break;
@@ -2220,8 +2235,13 @@ void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win
 void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_OBJECT (button, "photo_booth_button_cancel_clicked");
 	_play_event_sound (photo_booth_get_instance_private (pb), ACK_SOUND);
+	if (priv->do_save_photos < SAVE_ALL) {
+		photo_booth_delete_file (pb);
+	}
 	photo_booth_cancel (pb);
 }
 
@@ -2436,15 +2456,18 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 
 	g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
 
-	if ((priv->imgur_album_id && priv->imgur_access_token) || priv->facebook_put_uri)
+	if (priv->do_save_photos == SAVE_ASK || (priv->imgur_album_id && priv->imgur_access_token) || priv->facebook_put_uri)
 	{
 		gtk_widget_show (GTK_WIDGET (priv->win->button_upload));
 		g_timeout_add_seconds (priv->upload_timeout, (GSourceFunc) photo_booth_upload_timedout, pb);
 		photo_booth_change_state (pb, PB_STATE_ASK_UPLOAD);
 	}
-	else
+	else {
+		if (priv->do_save_photos == SAVE_NEVER) {
+			photo_booth_delete_file (pb);
+		}
 		photo_booth_cancel (pb);
-
+	}
 	return;
 }
 
@@ -2572,12 +2595,26 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 	return;
 }
 
+static gboolean photo_booth_preview_timedout (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	GST_DEBUG_OBJECT (pb, "previews timed out");
+	if (priv->do_save_photos < SAVE_ALL) {
+		photo_booth_delete_file (pb);
+	}
+	photo_booth_cancel (pb);
+	return FALSE;
+}
+
 static gboolean photo_booth_upload_timedout (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	if (priv->state == PB_STATE_ASK_UPLOAD)
 	{
-		GST_DEBUG_OBJECT (pb, "ask upload timed out");
+		GST_DEBUG_OBJECT (pb, "ask save/upload timed out");
+		if (priv->do_save_photos == SAVE_ASK) {
+			photo_booth_delete_file (pb);
+		}
 		photo_booth_cancel (pb);
 	}
 	return FALSE;
