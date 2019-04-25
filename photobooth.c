@@ -2024,8 +2024,12 @@ static GstPadProbeReturn photo_booth_drop_thumbnails (GstPad * pad, GstPadProbeI
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	GST_DEBUG_OBJECT (pb, "probe function payload: %" GST_PTR_FORMAT " drop_thumbnails=%i", gst_pad_probe_info_get_buffer (info), priv->drop_thumbnails);
-	if (priv->drop_thumbnails)
+	GstBuffer *buf = gst_pad_probe_info_get_buffer (info);
+	gsize size = gst_buffer_get_size (buf);
+
+	GST_DEBUG_OBJECT (pb, "probe function payload: %" GST_PTR_FORMAT " size=%" G_GSIZE_FORMAT " drop_thumbnails=%i", buf, size, priv->drop_thumbnails);
+
+	if (priv->drop_thumbnails || size < 3*1024*1024)
 		return GST_PAD_PROBE_DROP;
 
 	priv->drop_thumbnails = TRUE;
