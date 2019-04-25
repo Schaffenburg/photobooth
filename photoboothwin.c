@@ -71,6 +71,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_cancel);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_print);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_upload);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_publish);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, switch_flip);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_clock);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status);
@@ -101,6 +102,7 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_button_set_label (win->button_cancel, _("Cancel"));
 	gtk_button_set_label (win->button_print, _("Print photo"));
 	gtk_button_set_label (win->button_upload, _("Upload photo"));
+	gtk_button_set_label (win->button_publish, _("Publish photo"));
 	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }
 
@@ -158,7 +160,7 @@ gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
 	gchar *str;
 	priv = photo_booth_window_get_instance_private (win);
 	priv->countdown--;
-	GST_DEBUG ("_pbw_tick_countdown %i", priv->countdown);
+	GST_LOG ("_pbw_tick_countdown %i", priv->countdown);
 	if (priv->countdown > 0)
 	{
 		gchar *status_str = g_strdup_printf (_("Taking photo in %d seconds..."), priv->countdown);
@@ -204,7 +206,6 @@ void photo_booth_window_start_countdown (PhotoBoothWindow *win, gint count)
 	for (i = 1; i <= count+2; i++)
 	{
 		g_timeout_add (1000*i, (GSourceFunc) _pbw_tick_countdown, win);
-		GST_INFO ("added timeout callback at %i", 1000*i);
 	}
 }
 

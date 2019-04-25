@@ -18,6 +18,7 @@
 
 #include <glib-unix.h>
 #include <glib-object.h>
+#include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
 #include <gphoto2/gphoto2.h>
@@ -85,8 +86,8 @@ typedef enum
 	PB_STATE_PROCESS_PHOTO,
 	PB_STATE_ASK_PRINT,
 	PB_STATE_PRINTING,
-	PB_STATE_ASK_UPLOAD,
-	PB_STATE_UPLOADING,
+	PB_STATE_ASK_PUBLISH,
+	PB_STATE_PUBLISHING,
 	PB_STATE_SCREENSAVER
 } PhotoboothState;
 

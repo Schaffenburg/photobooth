@@ -36,7 +36,7 @@ struct _PhotoBoothWindow
 	GtkWidget *gtkgstwidget;
 	GtkFixed *fixed;
 	GtkImage *image;
-	GtkButton *button_cancel, *button_print, *button_upload;
+	GtkButton *button_cancel, *button_print, *button_publish, *button_upload;
 	GtkSwitch *switch_flip;
 	GtkLabel *status_clock, *status, *status_printer;
 };

@@ -90,6 +90,25 @@
               </packing>
             </child>
             <child>
+              <object class="GtkButton" id="button_publish">
+                <property name="label" translatable="yes">Publish!</property>
+                <property name="width_request">360</property>
+                <property name="height_request">120</property>
+                <property name="can_focus">True</property>
+                <property name="receives_default">False</property>
+                <property name="margin_top">10</property>
+                <property name="margin_bottom">10</property>
+                <signal name="clicked" handler="photo_booth_button_publish_clicked" swapped="no"/>
+                <style>
+                  <class name="publish"/>
+                </style>
+              </object>
+              <packing>
+                <property name="x">840</property>
+                <property name="y">640</property>
+              </packing>
+            </child>
+            <child>
               <object class="GtkButton" id="button_upload">
                 <property name="label" translatable="yes">Upload!</property>
                 <property name="width_request">360</property>

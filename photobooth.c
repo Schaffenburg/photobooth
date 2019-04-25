@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -46,6 +47,7 @@
 
 typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 typedef enum { SAVE_NEVER, SAVE_ASK, SAVE_PRINTED, SAVE_ALL } save_t;
+typedef enum { UPLOAD_NEVER, UPLOAD_ASK, UPLOAD_PRINTED, UPLOAD_ALL } upload_t;
 
 typedef struct _PhotoBoothPrivate PhotoBoothPrivate;
 
@@ -63,6 +65,7 @@ struct _PhotoBoothPrivate
 	gint               preview_timeout;
 	gulong             preview_timeout_id;
 	gchar             *overlay_image;
+	gboolean           do_flip;
 
 	save_t             do_save_photos;
 	gchar             *save_path_template;
@@ -101,15 +104,25 @@ struct _PhotoBoothPrivate
 	gint64             last_play_pos;
 
 	gint               upload_timeout;
+	upload_t           do_linx_upload;
+	gchar             *linx_put_uri;
+	gint               linx_expiry;
+	GThread           *linx_upload_thread;
+	gchar             *uuid;
 	gchar             *facebook_put_uri;
 	gchar             *imgur_album_id;
 	gchar             *imgur_access_token;
 	gchar             *imgur_description;
-	GThread           *upload_thread;
+	GThread           *publish_thread;
 	GMutex             upload_mutex;
 	gchar             *twitter_bridge_host;
 	guint              twitter_bridge_port;
-	gboolean           do_flip;
+
+	gboolean           do_qrcode;
+	gchar             *qrcode_base_uri;
+	gint               qrcode_x_offset;
+	gint               qrcode_y_offset;
+	gfloat             qrcode_scale;
 
 	PhotoBoothMasquerade *masquerade;
 	gboolean           do_facedetect;
@@ -138,6 +151,12 @@ struct _PhotoBoothPrivate
 #define IMGUR_UPLOAD_URI "https://api.imgur.com/3/upload"
 #define DEFAULT_TWITTER_BRIDGE_HOST NULL
 #define DEFAULT_TWITTER_BRIDGE_PORT 0
+#define DEFAULT_QRCODE TRUE
+#define DEFAULT_QRCODE_X -1
+#define DEFAULT_QRCODE_Y -1
+#define DEFAULT_QRCODE_SCALE 4.0
+#define DEFAULT_QRCODE_BASE_URI "https://schaffenburg.org/"
+#define DEFAULT_LINX_UPLOAD UPLOAD_NEVER
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION)
 
@@ -192,7 +211,6 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb);
 static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data);
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb);
-static void photo_booth_free_print_buffer (PhotoBooth *pb);
 static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 static gboolean photo_booth_preview_timedout (PhotoBooth *pb);
 
@@ -208,8 +226,10 @@ static void photo_booth_printing_error_dialog (PhotoBoothWindow *window, GError 
 
 /* upload functions */
 void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win);
-static void photo_booth_post_thread_func (PhotoBooth *pb);
-static gboolean photo_booth_upload_timedout (PhotoBooth *pb);
+void photo_booth_button_publish_clicked (GtkButton *button, PhotoBoothWindow *win);
+static void photo_booth_public_post_thread_func (PhotoBooth *pb);
+static void photo_booth_linx_post_thread_func (PhotoBooth *pb);
+static gboolean photo_booth_publish_timedout (PhotoBooth *pb);
 
 static void photo_booth_class_init (PhotoBoothClass *klass)
 {
@@ -297,14 +317,22 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->photos_taken = priv->photos_printed = 0;
 	priv->save_filename_count = 0;
 	priv->upload_timeout = 0;
+	priv->do_linx_upload = DEFAULT_LINX_UPLOAD;
+	priv->linx_put_uri = NULL;
+	priv->linx_expiry = 60;
+	priv->linx_upload_thread = NULL;
 	priv->facebook_put_uri = NULL;
 	priv->imgur_album_id = NULL;
 	priv->imgur_access_token = NULL;
 	priv->imgur_description = NULL;
-	priv->upload_thread = NULL;
+	priv->publish_thread = NULL;
 	priv->twitter_bridge_host = g_strdup (DEFAULT_TWITTER_BRIDGE_HOST);
 	priv->twitter_bridge_port = DEFAULT_TWITTER_BRIDGE_PORT;
-	priv->do_flip = DEFAULT_FLIP;
+	priv->do_qrcode = DEFAULT_QRCODE;
+	priv->qrcode_x_offset = DEFAULT_QRCODE_X;
+	priv->qrcode_y_offset = DEFAULT_QRCODE_Y;
+	priv->qrcode_scale = DEFAULT_QRCODE_SCALE;
+	priv->qrcode_base_uri = DEFAULT_QRCODE_BASE_URI;
 	priv->state_change_watchdog_timeout_id = 0;
 	priv->do_facedetect = DEFAULT_FACEDETECT;
 	priv->masquerade = NULL;
@@ -377,8 +405,10 @@ static void photo_booth_finalize (GObject *object)
 		close (pb->video_fd);
 		unlink (MOVIEPIPE);
 	}
-	if (priv->upload_thread)
-		g_thread_join (priv->upload_thread);
+	if (priv->publish_thread)
+		g_thread_join (priv->publish_thread);
+	if (priv->linx_upload_thread)
+		g_thread_join (priv->linx_upload_thread);
 	g_object_unref (priv->led);
 }
 
@@ -397,11 +427,13 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->cam_icc_profile);
 	g_free (priv->overlay_image);
 	g_free (priv->save_path_template);
+	g_free (priv->linx_put_uri);
 	g_free (priv->facebook_put_uri);
 	g_free (priv->imgur_album_id);
 	g_free (priv->imgur_access_token);
 	g_free (priv->imgur_description);
 	g_free (priv->twitter_bridge_host);
+	g_free (priv->qrcode_base_uri);
 	g_free (priv->masks_dir);
 	g_free (priv->masks_json);
 	if (priv->masquerade)
@@ -586,11 +618,18 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		}
 		if (g_key_file_has_group (gkf, "upload"))
 		{
+			READ_STR_INI_KEY (priv->qrcode_base_uri, gkf, "upload", "qrcode_base_uri");
+			READ_INT_INI_KEY (priv->qrcode_x_offset, gkf, "upload", "qrcode_x_offset");
+			READ_INT_INI_KEY (priv->qrcode_y_offset, gkf, "upload", "qrcode_y_offset");
+			READ_DBL_INI_KEY (priv->qrcode_scale, gkf, "upload", "qrcode_scale");
+			READ_INT_INI_KEY (priv->do_linx_upload, gkf, "upload", "linx_upload");
+			READ_STR_INI_KEY (priv->linx_put_uri, gkf, "upload", "linx_put_uri");
+			READ_INT_INI_KEY (priv->linx_expiry, gkf, "upload", "linx_expiry");
+			READ_INT_INI_KEY (priv->upload_timeout, gkf, "upload", "upload_timeout");
 			READ_STR_INI_KEY (priv->facebook_put_uri, gkf, "upload", "facebook_put_uri");
 			READ_STR_INI_KEY (priv->imgur_album_id, gkf, "upload", "imgur_album_id");
 			READ_STR_INI_KEY (priv->imgur_access_token, gkf, "upload", "imgur_access_token");
 			READ_STR_INI_KEY (priv->imgur_description, gkf, "upload", "imgur_description");
-			READ_INT_INI_KEY (priv->upload_timeout, gkf, "upload", "upload_timeout");
 			READ_STR_INI_KEY (priv->twitter_bridge_host, gkf, "upload", "twitter_bridge_host");
 			READ_INT_INI_KEY (priv->twitter_bridge_port, gkf, "upload", "twitter_bridge_port");
 		}
@@ -608,8 +647,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		gchar *filenameprefix = g_strndup (save_path_basename, pos-save_path_basename);
 		GDir *save_dir;
 		GError *error = NULL;
-		gchar *cdir = g_path_get_dirname (priv->save_path_template);
-		save_dir = g_dir_open ((const gchar*)cdir, 0, &error);
+		const gchar *save_path_dirname = g_path_get_dirname (priv->save_path_template);
+		save_dir = g_dir_open (save_path_dirname, 0, &error);
 		if (error) {
 			GST_WARNING ("couldn't open save directory '%s': %s", priv->save_path_template, error->message);
 		}
@@ -619,7 +658,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			GMatchInfo *match_info;
 			GRegex *regex;
 			gchar *pattern = g_strdup_printf("(?<filename>%s)(?<number>\\d+)", filenameprefix);
-			GST_TRACE ("save_path_basename regex pattern = '%s'", pattern);
+			GST_TRACE ("save_path_base_name regex pattern = '%s'", pattern);
 			regex = g_regex_new (pattern, 0, 0, &error);
 			if (error) {
 				g_critical ("%s\n", error->message);
@@ -640,6 +679,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			}
 			g_dir_close (save_dir);
 		}
+		GST_WARNING ("save_path_dirname %s", save_path_dirname);
 	}
 	g_free (save_path_basename);
 
@@ -688,10 +728,12 @@ void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
 static void photo_booth_delete_file (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	g_mutex_lock (&priv->processing_mutex);
 	const gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
 	if (g_unlink (filename)) {
 		GST_ERROR_OBJECT (pb, "error deleting file '%s': %s (%i)", filename, strerror(errno), errno);
 	}
+	g_mutex_unlock (&priv->processing_mutex);
 }
 
 static gboolean photo_booth_cam_init (CameraInfo **cam_info)
@@ -1124,9 +1166,11 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	GstElement *photo_bin;
-	GstElement *photo_source, *photo_decoder, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee, *photo_facedetect = NULL;
+	GstElement *photo_source, *photo_decoder, *photo_scale, *photo_filter, *photo_overlay, *photo_convert, *photo_gamma, *photo_tee;
+	GstElement *photo_facedetect = NULL, *qr_overlay = NULL;
 	GstCaps *caps;
 	GstPad *ghost, *pad;
+	gboolean ret;
 
 	priv = photo_booth_get_instance_private (pb);
 
@@ -1145,6 +1189,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	gst_caps_unref (caps);
 
 	photo_overlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-overlay");
+	g_assert (photo_overlay);
 	if (priv->overlay_image)
 		g_object_set (photo_overlay, "location", priv->overlay_image, NULL);
 	g_object_set (photo_overlay, "overlay-width", priv->print_width, NULL);
@@ -1164,12 +1209,38 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 		return FALSE;
 	}
 
-	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL);
+	gst_bin_add_many (GST_BIN (photo_bin), photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, photo_gamma, photo_convert, photo_tee, NULL);
+	ret = gst_element_link_many (photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, NULL);
+
+	if (priv->do_qrcode)
+	{
+		qr_overlay = gst_element_factory_make ("qroverlay", "qr-overlay");
+		if (qr_overlay)
+		{
+			GST_INFO_OBJECT (photo_bin, "qroverlay plugin will be used!");
+			g_object_set (qr_overlay,
+				"x-offset", priv->qrcode_x_offset,
+				"y-offset", priv->qrcode_y_offset,
+				"pixel-size", priv->qrcode_scale,
+				"string", priv->qrcode_base_uri, NULL);
+			gst_bin_add (GST_BIN (photo_bin), qr_overlay);
+			ret |= gst_element_link_many (photo_overlay, qr_overlay, photo_gamma, NULL);
+		}
+	}
+	if (!qr_overlay)
+	{
+		ret |= gst_element_link (photo_overlay, photo_gamma);
+	}
+	if (!ret)
+	{
+		GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
+		return FALSE;
+	}
 
 	if (photo_facedetect)
 	{
 		GstPad *masksinkpad, *masksrcpad;
-    priv->mask_bin = gst_element_factory_make ("bin", "photo-mask-bin");
+		priv->mask_bin = gst_element_factory_make ("bin", "photo-mask-bin");
 		GstElement *detect_convert = gst_element_factory_make ("videoconvert", "facedetect-photoconvert");
 		gchar *overlay_name = g_strdup_printf (PHOTO_MASKOVERLAY_NAME_TEMPLATE, 0);
 		GstElement *photo_maskoverlay = gst_element_factory_make ("gdkpixbufoverlay", overlay_name);
@@ -1177,7 +1248,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 		g_assert (priv->mask_bin);
 		g_assert (detect_convert);
 		g_assert (photo_maskoverlay);
-		gboolean ret = gst_bin_add (GST_BIN (priv->mask_bin), photo_maskoverlay);
+		ret = gst_bin_add (GST_BIN (priv->mask_bin), photo_maskoverlay);
 		g_assert (ret);
 		g_object_set (G_OBJECT (photo_facedetect), "updates", 0, "display", FALSE, "min-size-width", 100, "min-stddev", 10, NULL);
 		pad = gst_element_get_static_pad (photo_maskoverlay, "sink");
@@ -1195,13 +1266,14 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 		gst_pad_set_active (masksrcpad, TRUE);
 		gst_object_unref (pad);
 		gst_bin_add_many (GST_BIN (photo_bin), priv->mask_bin, photo_facedetect, detect_convert, NULL);
-		ret = gst_element_link_many (photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, priv->mask_bin, photo_convert, photo_facedetect, detect_convert, photo_gamma, photo_tee, NULL);
+		ret = gst_element_link_many (photo_gamma, priv->mask_bin, photo_convert, photo_facedetect, detect_convert, photo_tee, NULL);
 		g_assert (ret);
 		GST_INFO_OBJECT (photo_bin, "facedetect plugin will be used!");
 	}
+
 	if (!photo_facedetect)
 	{
-		if (!gst_element_link_many (photo_source, photo_decoder, photo_scale, photo_filter, photo_overlay, photo_convert, photo_gamma, photo_tee, NULL))
+		if (!gst_element_link_many (photo_gamma, photo_convert, photo_tee, NULL))
 		{
 			GST_ERROR_OBJECT (photo_bin, "couldn't link photobin elements!");
 			return FALSE;
@@ -1464,7 +1536,7 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 	int cooldown_delay = 2000;
 	if (priv->state == PB_STATE_NONE)
 		cooldown_delay = 10;
-	if (priv->state != PB_STATE_UPLOADING)
+	if (priv->state != PB_STATE_PUBLISHING)
 	{
 		photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
 		gtk_label_set_text (priv->win->status, _("Please wait..."));
@@ -1478,9 +1550,9 @@ static gboolean photo_booth_preview (PhotoBooth *pb)
 static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	if (priv->state == PB_STATE_UPLOADING)
+	if (priv->state == PB_STATE_PUBLISHING)
 	{
-		GST_DEBUG_OBJECT (pb, "still uploading, wait another bit");
+		GST_DEBUG_OBJECT (pb, "still publishing, wait another bit");
 		return TRUE;
 	}
 	if (!pb->cam_info)
@@ -1636,7 +1708,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		}
 		case PB_STATE_ASK_PRINT:
 			g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
-		case PB_STATE_ASK_UPLOAD:
+		case PB_STATE_ASK_PUBLISH:
 		{
 // 			photo_booth_button_cancel_clicked (pb);
 			_play_event_sound (priv, ERROR_SOUND);
@@ -1973,11 +2045,12 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		case PB_STATE_TAKING_PHOTO:
 		{
 			GST_DEBUG_OBJECT (pb, "PB_STATE_TAKING_PHOTO first buffer caught -> display in sink");
-			if (priv->print_copies_max)
-			{
+			if (priv->print_copies_max) {
 				gtk_widget_show (GTK_WIDGET (priv->win->button_print));
 			}
-
+			if (priv->do_linx_upload == UPLOAD_ASK) {
+				gtk_widget_show (GTK_WIDGET (priv->win->button_upload));
+			}
 			gtk_widget_hide (GTK_WIDGET (priv->win->image));
 			gtk_widget_show (GTK_WIDGET (priv->win->gtkgstwidget));
 			if (priv->print_copies_min != priv->print_copies_max) {
@@ -2027,6 +2100,9 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			}
 			if (priv->cam_reeinit_after_snapshot)
 				SEND_COMMAND (pb, CONTROL_REINIT);
+			if (priv->do_linx_upload == UPLOAD_ALL) {
+				priv->linx_upload_thread = g_thread_try_new ("upload_linx", (GThreadFunc) photo_booth_linx_post_thread_func, pb, NULL);
+			}
 			ret = GST_PAD_PROBE_REMOVE;
 			break;
 		}
@@ -2041,7 +2117,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GstElement *tee, *encoder, *filesink, *lcms, *appsink;
+	GstElement *tee, *encoder, *filesink, *lcms, *appsink, *qr_overlay;
 	priv = photo_booth_get_instance_private (pb);
 
 	GST_DEBUG_OBJECT (pb, "plugging photo processing elements. locking...");
@@ -2057,6 +2133,19 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	GST_INFO_OBJECT (pb->photo_bin, "saving photo to '%s'", filename);
 	g_object_set (filesink, "location", filename, NULL);
 	g_free (filename);
+
+	qr_overlay = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "qr-overlay");
+	if (qr_overlay && priv->do_linx_upload)
+	{
+		gchar *uri = NULL;
+		if (priv->linx_put_uri) {
+			priv->uuid = g_uuid_string_random ();
+		}
+		uri = g_strconcat (priv->qrcode_base_uri, priv->uuid, NULL);
+		g_object_set (qr_overlay, "string", uri, NULL);
+		GST_INFO_OBJECT (pb->photo_bin, "QR Code string=%s", uri);
+		g_free (uri);
+	}
 
 	gst_bin_add_many (GST_BIN (pb->photo_bin), encoder, filesink, NULL);
 	tee = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "photo-tee");
@@ -2129,7 +2218,7 @@ static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpoin
 	priv = photo_booth_get_instance_private (pb);
 	g_mutex_lock (&priv->processing_mutex);
 	sample = gst_app_sink_pull_sample (GST_APP_SINK (appsink));
-	priv->print_buffer = gst_buffer_ref( gst_sample_get_buffer (sample));
+	priv->print_buffer = gst_buffer_ref (gst_sample_get_buffer (sample));
 
 	pad = gst_element_get_static_pad (appsink, "sink");
 	GstCaps *caps = gst_pad_get_current_caps (pad);
@@ -2186,17 +2275,21 @@ static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb)
 	return FALSE;
 }
 
-static void photo_booth_free_print_buffer (PhotoBooth *pb)
+static void photo_booth_ask_for_publishing (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GstElement *appsink;
 	priv = photo_booth_get_instance_private (pb);
-	GST_DEBUG_OBJECT (pb, "freeing buffer");
-	if (GST_IS_BUFFER (priv->print_buffer))
-		gst_buffer_unref (priv->print_buffer);
-	appsink = gst_bin_get_by_name (GST_BIN (pb->photo_bin), "print-appsink");
-	if (GST_IS_ELEMENT (appsink))
-		gst_object_unref (appsink);
+	if (priv->do_save_photos == SAVE_ASK || (priv->imgur_album_id && priv->imgur_access_token) || priv->facebook_put_uri)
+	{
+		gtk_widget_show (GTK_WIDGET (priv->win->button_publish));
+		g_timeout_add_seconds (priv->upload_timeout, (GSourceFunc) photo_booth_publish_timedout, pb);
+		photo_booth_change_state (pb, PB_STATE_ASK_PUBLISH);
+	} else {
+		if (priv->do_save_photos == SAVE_NEVER) {
+			photo_booth_delete_file (pb);
+		}
+		photo_booth_cancel (pb);
+	}
 }
 
 void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
@@ -2208,6 +2301,9 @@ void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
 	if (priv->state == PB_STATE_ASK_PRINT)
 	{
 		_play_event_sound (priv, ACK_SOUND);
+		if (priv->linx_put_uri && (priv->do_linx_upload == UPLOAD_PRINTED || priv->do_linx_upload == UPLOAD_ASK)) {
+			priv->linx_upload_thread = g_thread_try_new ("upload_linx", (GThreadFunc) photo_booth_linx_post_thread_func, pb, NULL);
+		}
 		photo_booth_print (pb);
 	}
 	if (priv->state == PB_STATE_MASQUERADE_PHOTO) {
@@ -2222,12 +2318,29 @@ void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_OBJECT (pb, "photo_booth_button_upload_clicked");
-	if (priv->state == PB_STATE_ASK_UPLOAD)
+	if (priv->state == PB_STATE_ASK_PRINT)
 	{
 		_play_event_sound (priv, ACK_SOUND);
 		photo_booth_window_set_spinner (priv->win, TRUE);
 		gtk_label_set_text (priv->win->status, _("Uploading..."));
-		priv->upload_thread = g_thread_try_new ("upload", (GThreadFunc) photo_booth_post_thread_func, pb, NULL);
+		priv->linx_upload_thread = g_thread_try_new ("upload_linx", (GThreadFunc) photo_booth_linx_post_thread_func, pb, NULL);
+		photo_booth_ask_for_publishing (pb);
+	}
+}
+
+void photo_booth_button_publish_clicked (GtkButton *button, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+	GST_DEBUG_OBJECT (pb, "photo_booth_button_publish_clicked");
+	if (priv->state == PB_STATE_ASK_PUBLISH)
+	{
+		_play_event_sound (priv, ACK_SOUND);
+		photo_booth_window_set_spinner (priv->win, TRUE);
+		gtk_label_set_text (priv->win->status, _("Publishing..."));
+		gtk_widget_hide (GTK_WIDGET (priv->win->button_publish));
+		priv->publish_thread = g_thread_try_new ("publish", (GThreadFunc) photo_booth_public_post_thread_func, pb, NULL);
 		photo_booth_cancel (pb);
 	}
 }
@@ -2253,6 +2366,7 @@ void photo_booth_cancel (PhotoBooth *pb)
 	switch (priv->state) {
 		case PB_STATE_MASQUERADE_PHOTO:
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
 			photo_booth_window_get_copies_hide (priv->win);
 		case PB_STATE_PROCESS_PHOTO:
 			photo_booth_process_photo_remove_elements (pb);
@@ -2262,11 +2376,12 @@ void photo_booth_cancel (PhotoBooth *pb)
 		case PB_STATE_ASK_PRINT:
 		{
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
 			photo_booth_window_get_copies_hide (priv->win);
 			break;
 		}
-		case PB_STATE_ASK_UPLOAD:
-			gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
+		case PB_STATE_ASK_PUBLISH:
+			gtk_widget_hide (GTK_WIDGET (priv->win->button_publish));
 			break;
 		default: return;
 	}
@@ -2302,6 +2417,7 @@ static void photo_booth_print (PhotoBooth *pb)
 	GST_INFO_OBJECT (pb, "PRINT! prints_remaining=%i", priv->prints_remaining);
 	priv->print_copies = photo_booth_window_get_copies_hide (priv->win);
 	gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
+	gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
 
 #ifdef ALWAYS_PRINT_DIALOG
 	if (1)
@@ -2455,19 +2571,7 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 		GST_INFO_OBJECT (user_data, "print_done photos_printed unhandled result %i", result);
 
 	g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
-
-	if (priv->do_save_photos == SAVE_ASK || (priv->imgur_album_id && priv->imgur_access_token) || priv->facebook_put_uri)
-	{
-		gtk_widget_show (GTK_WIDGET (priv->win->button_upload));
-		g_timeout_add_seconds (priv->upload_timeout, (GSourceFunc) photo_booth_upload_timedout, pb);
-		photo_booth_change_state (pb, PB_STATE_ASK_UPLOAD);
-	}
-	else {
-		if (priv->do_save_photos == SAVE_NEVER) {
-			photo_booth_delete_file (pb);
-		}
-		photo_booth_cancel (pb);
-	}
+	photo_booth_ask_for_publishing (pb);
 	return;
 }
 
@@ -2479,22 +2583,94 @@ size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
 	return i;
 }
 
-void photo_booth_post_thread_func (PhotoBooth* pb)
+void photo_booth_linx_post_thread_func (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv;
+	gchar *header, *filename, *put_uri;
+	CURLcode res;
+	CURL *curl;
+	struct curl_httppost* post = NULL;
+	struct curl_httppost* last = NULL;
+	struct curl_slist *headerlist = NULL;
+	struct stat file_info;
+	FILE *src_file;
+	GString *buf = g_string_new("");
+
+	curl = curl_easy_init();
+	g_assert (curl);
+
+	priv = photo_booth_get_instance_private (pb);
+	g_mutex_lock (&priv->processing_mutex);
+	filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+	put_uri = g_strconcat (priv->linx_put_uri, priv->uuid, NULL);
+	g_mutex_unlock (&priv->processing_mutex);
+
+	g_mutex_lock (&priv->upload_mutex);
+
+	stat (filename, &file_info);
+	src_file = fopen (filename, "rb");
+
+	curl_formadd (&post, &last, CURLFORM_COPYNAME, "image", CURLFORM_FILE, filename, CURLFORM_CONTENTTYPE, "image/jpeg", CURLFORM_END);
+	curl_easy_setopt (curl, CURLOPT_USERAGENT, "Schaffenburg Photobooth");
+
+	header = g_strdup_printf ("Linx-Expiry: %d", priv->linx_expiry);
+	headerlist = curl_slist_append (headerlist, header);
+	curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headerlist);
+	curl_easy_setopt (curl, CURLOPT_URL, put_uri);
+	g_free (header);
+
+	// curl_easy_setopt (curl, CURLOPT_VERBOSE, 1L);
+	curl_easy_setopt (curl, CURLOPT_PUT, 1L);
+	curl_easy_setopt (curl, CURLOPT_UPLOAD, 1L);
+	curl_easy_setopt (curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t) file_info.st_size);
+
+	curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, _curl_write_func);
+	curl_easy_setopt (curl, CURLOPT_WRITEDATA, buf);
+
+	curl_easy_setopt(curl, CURLOPT_READDATA, src_file);
+
+	GST_INFO_OBJECT (pb, "linx posting %s to %s", filename, priv->linx_put_uri);
+	res = curl_easy_perform (curl);
+	if (res != CURLE_OK)
+	{
+		GST_WARNING ("curl_easy_perform() failed %s", curl_easy_strerror(res));
+	}
+	curl_easy_cleanup (curl);
+	curl_formfree (post);
+	fclose (src_file);
+
+	GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
+
+	g_free (filename);
+	g_free (put_uri);
+	g_string_free (buf, TRUE);
+	g_mutex_unlock (&priv->upload_mutex);
+
+	photo_booth_window_set_spinner (priv->win, FALSE);
+	if (priv->do_linx_upload == UPLOAD_ASK) {
+		photo_booth_ask_for_publishing (pb);
+	}
+	return;
+}
+
+void photo_booth_public_post_thread_func (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
 	CURLcode res;
 	CURL *curl;
 	priv = photo_booth_get_instance_private (pb);
-	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_facebook_post");
+
 	g_mutex_lock (&priv->upload_mutex);
 	curl = curl_easy_init();
 	if (curl)
 	{
-		photo_booth_change_state (pb, PB_STATE_UPLOADING);
+		photo_booth_change_state (pb, PB_STATE_PUBLISHING);
 		struct curl_httppost* post = NULL;
 		struct curl_httppost* last = NULL;
 		GString *buf = g_string_new("");
-		gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+		g_mutex_lock (&priv->processing_mutex);
+		const gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+		g_mutex_unlock (&priv->processing_mutex);
 		curl_formadd (&post, &last, CURLFORM_COPYNAME, "image", CURLFORM_FILE, filename, CURLFORM_CONTENTTYPE, "image/jpeg", CURLFORM_END);
 		curl_easy_setopt (curl, CURLOPT_USERAGENT, "Schaffenburg Photobooth");
 		if (priv->imgur_access_token && priv->imgur_album_id)
@@ -2516,6 +2692,11 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 			curl_easy_setopt (curl, CURLOPT_URL, priv->facebook_put_uri);
 			GST_INFO_OBJECT (pb, "facebook posting '%s' to '%s'...", filename, priv->facebook_put_uri);
 		}
+		else
+		{
+			curl_formfree (post);
+			goto out;
+		}
 		curl_easy_setopt (curl, CURLOPT_POST, 1L);
 		curl_easy_setopt (curl, CURLOPT_HTTPPOST, post);
 		curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, _curl_write_func);
@@ -2525,9 +2706,7 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 		{
 			GST_WARNING ("curl_easy_perform() failed %s", curl_easy_strerror(res));
 		}
-		curl_easy_cleanup (curl);
 		curl_formfree (post);
-		g_free (filename);
 		GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
 
 		if (priv->twitter_bridge_host && priv->twitter_bridge_port)
@@ -2549,7 +2728,7 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 				GST_WARNING ("Unable to parse '%s': %s", buf->str, error->message);
 				g_error_free (error);
 				g_object_unref (parser);
-				return;
+				goto out;
 			}
 
 			root = json_parser_get_root (parser);
@@ -2559,15 +2738,12 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 
 			json_reader_read_member (reader, "link");
 			link_url = json_reader_get_string_value (reader);
-			GST_INFO ("imgur uploaded photo url: %s", link_url);
+			GST_INFO ("imgur published photo url: %s", link_url);
 
 			client = g_socket_client_new();
 
 			connection = g_socket_client_connect_to_host (client,
-																										priv->twitter_bridge_host,
-																										priv->twitter_bridge_port,
-																										NULL,
-																										&error);
+				priv->twitter_bridge_host, priv->twitter_bridge_port, NULL, &error);
 
 			if (error != NULL) {
 						GST_WARNING ("Unable to connect to twitter bridge: %s", error->message);
@@ -2589,7 +2765,11 @@ void photo_booth_post_thread_func (PhotoBooth* pb)
 		}
 		g_string_free (buf, TRUE);
 	}
+	goto out;
+
+out:
 	g_mutex_unlock (&priv->upload_mutex);
+	curl_easy_cleanup (curl);
 	photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
 	photo_booth_window_set_spinner (priv->win, FALSE);
 	return;
@@ -2606,12 +2786,12 @@ static gboolean photo_booth_preview_timedout (PhotoBooth *pb)
 	return FALSE;
 }
 
-static gboolean photo_booth_upload_timedout (PhotoBooth *pb)
+static gboolean photo_booth_publish_timedout (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	if (priv->state == PB_STATE_ASK_UPLOAD)
+	if (priv->state == PB_STATE_ASK_PUBLISH)
 	{
-		GST_DEBUG_OBJECT (pb, "ask save/upload timed out");
+		GST_DEBUG_OBJECT (pb, "ask save/publish timed out");
 		if (priv->do_save_photos == SAVE_ASK) {
 			photo_booth_delete_file (pb);
 		}
@@ -2640,8 +2820,8 @@ const gchar* photo_booth_state_get_name (PhotoboothState state)
 		case PB_STATE_PROCESS_PHOTO: return "PB_STATE_PROCESS_PHOTO";
 		case PB_STATE_ASK_PRINT: return "PB_STATE_ASK_PRINT";
 		case PB_STATE_PRINTING: return "PB_STATE_PRINTING";
-		case PB_STATE_ASK_UPLOAD: return "PB_STATE_ASK_UPLOAD";
-		case PB_STATE_UPLOADING: return "PB_STATE_UPLOADING";
+		case PB_STATE_ASK_PUBLISH: return "PB_STATE_ASK_PUBLISH";
+		case PB_STATE_PUBLISHING: return "PB_STATE_PUBLISHING";
 		case PB_STATE_SCREENSAVER: return "PB_STATE_SCREENSAVER";
 		default: break;
 	}
