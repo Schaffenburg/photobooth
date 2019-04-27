@@ -67,6 +67,7 @@ struct _PhotoBoothPrivate
 	gulong             preview_timeout_id;
 	gchar             *overlay_image;
 	gboolean           do_flip;
+	gboolean           hide_cursor;
 
 	save_t             do_save_photos;
 	gchar             *save_path_template;
@@ -143,6 +144,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
 #define DEFAULT_FLIP TRUE
+#define DEFAULT_HIDE_CURSOR TRUE
 #define DEFAULT_FACEDETECT FACEDETECT_DISABLED
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
@@ -289,6 +291,7 @@ static void photo_booth_init (PhotoBooth *pb)
 
 	priv->capture_thread = NULL;
 	priv->countdown = DEFAULT_COUNTDOWN;
+	priv->hide_cursor = DEFAULT_HIDE_CURSOR;
 	priv->preview_timeout = 0;
 	priv->preview_timeout_id = 0;
 	priv->preview_fps = PREVIEW_FPS;
@@ -550,6 +553,8 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_INT_INI_KEY (priv->screensaver_timeout, gkf, "general", "screensaver_timeout");
 			READ_STR_INI_KEY (screensaverfile, gkf, "general", "screensaver_file");
 			READ_INT_INI_KEY (priv->enable_facedetect, gkf, "general", "facedetection");
+			READ_BOOL_INI_KEY (priv->hide_cursor, gkf, "general", "hide_cursor");
+
 			if (screensaverfile)
 			{
 				gchar *screensaverabsfilename;
@@ -741,12 +746,12 @@ void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
 static void photo_booth_delete_file (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	g_mutex_lock (&priv->processing_mutex);
+	g_mutex_lock (&priv->upload_mutex);
 	const gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
 	if (g_unlink (filename)) {
 		GST_ERROR_OBJECT (pb, "error deleting file '%s': %s (%i)", filename, strerror(errno), errno);
 	}
-	g_mutex_unlock (&priv->processing_mutex);
+	g_mutex_unlock (&priv->upload_mutex);
 }
 
 static gboolean photo_booth_cam_init (CameraInfo **cam_info)
@@ -1400,7 +1405,8 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			{
 				GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_video_start");
 				GST_DEBUG ("video_sink GST_STATE_CHANGE_PAUSED_TO_PLAYING -> hide spinner!");
-				photo_booth_window_hide_cursor (priv->win);
+				if (priv->hide_cursor)
+					photo_booth_window_hide_cursor (priv->win);
 				photo_booth_window_set_spinner (priv->win, FALSE);
 			}
 			if (src == GST_OBJECT (priv->screensaver_playbin) && transition == GST_STATE_CHANGE_READY_TO_PAUSED)
@@ -1584,7 +1590,8 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	}
 	photo_booth_change_state (pb, PB_STATE_PREVIEW);
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
-	photo_booth_window_hide_cursor (priv->win);
+	if (priv->hide_cursor)
+		photo_booth_window_hide_cursor (priv->win);
 	gtk_widget_show (GTK_WIDGET (priv->win->switch_flip));
 	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
 		gtk_widget_show (GTK_WIDGET (priv->win->switch_facedetect));
@@ -2096,7 +2103,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			}
 			photo_booth_window_set_spinner (priv->win, FALSE);
 
-			if (priv->masquerade) {
+			if (gtk_switch_get_active (priv->win->switch_facedetect)) {
 				photo_booth_change_state (pb, PB_STATE_MASQUERADE_PHOTO);
 				GST_DEBUG_OBJECT (pb, "waiting for user to place masks");
 			} else {
@@ -2129,7 +2136,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		case PB_STATE_ASK_PRINT:
 		{
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
-			if (priv->masquerade) {
+			if (gtk_switch_get_active (priv->win->switch_facedetect)) {
 				GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe and open print dialoge");
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_print, pb);
 				photo_booth_masquerade_clear_mask_bin (priv->masquerade, priv->mask_bin);
@@ -2166,9 +2173,11 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 	filesink = gst_element_factory_make ("filesink", "photo-filesink");
 	if (!encoder || !filesink)
 		GST_ERROR_OBJECT (pb->photo_bin, "Failed to make photo encoder");
+	g_mutex_lock (&priv->upload_mutex);
 	priv->save_filename_count++;
 	gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
 	GST_INFO_OBJECT (pb->photo_bin, "saving photo to '%s'", filename);
+	g_mutex_unlock (&priv->upload_mutex);
 	g_object_set (filesink, "location", filename, NULL);
 	g_free (filename);
 
@@ -2179,7 +2188,7 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 		if (priv->linx_put_uri) {
 			priv->uuid = g_uuid_string_random ();
 		}
-		uri = g_strconcat (priv->qrcode_base_uri, priv->uuid, NULL);
+		uri = g_strconcat (priv->qrcode_base_uri, priv->uuid, ".jpg", NULL);
 		g_object_set (qr_overlay, "string", uri, NULL);
 		GST_INFO_OBJECT (pb->photo_bin, "QR Code string=%s", uri);
 		g_free (uri);
@@ -2232,9 +2241,9 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 
-	if (priv->masquerade) {
+	if (gtk_switch_get_active (priv->win->switch_facedetect)) {
 		photo_booth_masquerade_create_overlays (priv->masquerade, priv->mask_bin);
-	}	else {}
+	}
 
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_process_photo_plug_elements");
 
@@ -2639,15 +2648,15 @@ void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 	g_assert (curl);
 
 	priv = photo_booth_get_instance_private (pb);
-	g_mutex_lock (&priv->processing_mutex);
-	filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
-	put_uri = g_strconcat (priv->linx_put_uri, priv->uuid, NULL);
-	g_mutex_unlock (&priv->processing_mutex);
 
 	g_mutex_lock (&priv->upload_mutex);
+	filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
+	put_uri = g_strconcat (priv->linx_put_uri, priv->uuid, NULL);
 
 	stat (filename, &file_info);
 	src_file = fopen (filename, "rb");
+
+	GST_INFO ("linx PUT %s to %s, size: %ld, expiry: %d", filename, priv->linx_put_uri, file_info.st_size, priv->linx_expiry);
 
 	curl_formadd (&post, &last, CURLFORM_COPYNAME, "image", CURLFORM_FILE, filename, CURLFORM_CONTENTTYPE, "image/jpeg", CURLFORM_END);
 	curl_easy_setopt (curl, CURLOPT_USERAGENT, "Schaffenburg Photobooth");
@@ -2674,7 +2683,6 @@ void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 
 	curl_easy_setopt(curl, CURLOPT_READDATA, src_file);
 
-	GST_INFO_OBJECT (pb, "linx posting %s to %s", filename, priv->linx_put_uri);
 	res = curl_easy_perform (curl);
 	if (res != CURLE_OK)
 	{
@@ -2684,6 +2692,7 @@ void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 	curl_formfree (post);
 	fclose (src_file);
 
+	if (buf->str[buf->len-1] == '\n') buf->str[buf->len-1] = '\0';
 	GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
 
 	g_string_free (buf, TRUE);
@@ -2711,9 +2720,7 @@ void photo_booth_public_post_thread_func (PhotoBooth *pb)
 		struct curl_httppost* post = NULL;
 		struct curl_httppost* last = NULL;
 		GString *buf = g_string_new("");
-		g_mutex_lock (&priv->processing_mutex);
 		const gchar *filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
-		g_mutex_unlock (&priv->processing_mutex);
 		curl_formadd (&post, &last, CURLFORM_COPYNAME, "image", CURLFORM_FILE, filename, CURLFORM_CONTENTTYPE, "image/jpeg", CURLFORM_END);
 		curl_easy_setopt (curl, CURLOPT_USERAGENT, "Schaffenburg Photobooth");
 		if (priv->imgur_access_token && priv->imgur_album_id)

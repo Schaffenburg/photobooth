@@ -192,7 +192,7 @@ photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *s
 		height = (gdouble) gdk_pixbuf_get_height (mask->pixbuf) * video_scaling_factor;
 		x += mask->screen_offset_x + (gdouble) mask->offset_x * video_scaling_factor;
 		y += mask->screen_offset_y + (gdouble) mask->offset_y * video_scaling_factor;
-		GST_DEBUG_OBJECT (mask, "VIDEO mask size: (%dx%d) (video scaling factor=%.2f) position: (%d,%d) state: (%s)", width, height, video_scaling_factor, x, y, photo_booth_state_get_name (state));
+		GST_LOG_OBJECT (mask, "VIDEO mask size: (%dx%d) (video scaling factor=%.2f) position: (%d,%d) state: (%s)", width, height, video_scaling_factor, x, y, photo_booth_state_get_name (state));
 	}
 	else { // Captured Photo
 		width = (gdouble) width * mask->print_scaling_factor;
@@ -218,7 +218,7 @@ photo_booth_mask_hide (PhotoBoothMask *mask)
 {
 	if (!mask->active || !mask->imagew)
 		return;
-	GST_DEBUG_OBJECT (mask, "mask hide!");
+	GST_LOG_OBJECT (mask, "mask hide!");
 	gtk_widget_hide (mask->eventw);
 	gtk_widget_hide (mask->imagew);
 	mask->active = FALSE;
@@ -379,7 +379,7 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	{
 		gchar *contents = g_strdup_value_contents (faces);
 		n_faces = gst_value_list_get_size (faces);
-		GST_DEBUG ("Detected objects: %s face=%i masks=%i", *(&contents), n_faces, n_masks);
+		GST_LOG ("Detected objects: %s face=%i masks=%i", *(&contents), n_faces, n_masks);
 		g_free (contents);
 	}
 
@@ -413,7 +413,7 @@ void
 photo_booth_masquerade_create_overlays (PhotoBoothMasquerade *masq, GstElement *mask_bin)
 {
 	GList *m;
-	GST_DEBUG ("photo_booth_masquerade_create_overlays");
+	GST_DEBUG_OBJECT (mask_bin, "photo_booth_masquerade_create_overlays");
 	for (m = masq->masks; m != NULL; m = m->next) {
 		if (PHOTO_BOOTH_MASK (m->data)->active) {
 			photo_booth_mask_create_overlay (m->data, mask_bin);
@@ -428,7 +428,7 @@ photo_booth_masquerade_clear_mask_bin (PhotoBoothMasquerade *masq, GstElement *m
 	GValue value = { 0 };
 	GstElement *elem = NULL;
 	gboolean done = FALSE;
-	GST_DEBUG ("clearing mask bin!");
+	GST_DEBUG_OBJECT (mask_bin, "clearing mask bin!");
 
 	iter = gst_bin_iterate_elements (GST_BIN (mask_bin));
 	while (!done) {
@@ -436,7 +436,7 @@ photo_booth_masquerade_clear_mask_bin (PhotoBoothMasquerade *masq, GstElement *m
 			case GST_ITERATOR_OK:
 				elem = (GstElement *) g_value_get_object (&value);
 				g_object_set (elem, "pixbuf", NULL, NULL);
-				GST_DEBUG_OBJECT (elem, "unsetting pixbuf property");
+				GST_LOG_OBJECT (elem, "unsetting pixbuf property");
 				/* Iterator increased the element refcount, so unref */
 				g_value_unset (&value);
 				break;
