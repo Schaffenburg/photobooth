@@ -106,6 +106,7 @@ struct _PhotoBoothPrivate
 	gint               upload_timeout;
 	upload_t           do_linx_upload;
 	gchar             *linx_put_uri;
+	gchar             *linx_api_key;
 	gint               linx_expiry;
 	GThread           *linx_upload_thread;
 	gchar             *uuid;
@@ -319,6 +320,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->upload_timeout = 0;
 	priv->do_linx_upload = DEFAULT_LINX_UPLOAD;
 	priv->linx_put_uri = NULL;
+	priv->linx_api_key = NULL;
 	priv->linx_expiry = 60;
 	priv->linx_upload_thread = NULL;
 	priv->facebook_put_uri = NULL;
@@ -428,6 +430,7 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->overlay_image);
 	g_free (priv->save_path_template);
 	g_free (priv->linx_put_uri);
+	g_free (priv->linx_api_key);
 	g_free (priv->facebook_put_uri);
 	g_free (priv->imgur_album_id);
 	g_free (priv->imgur_access_token);
@@ -624,6 +627,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_DBL_INI_KEY (priv->qrcode_scale, gkf, "upload", "qrcode_scale");
 			READ_INT_INI_KEY (priv->do_linx_upload, gkf, "upload", "linx_upload");
 			READ_STR_INI_KEY (priv->linx_put_uri, gkf, "upload", "linx_put_uri");
+			READ_STR_INI_KEY (priv->linx_api_key, gkf, "upload", "linx_api_key");
 			READ_INT_INI_KEY (priv->linx_expiry, gkf, "upload", "linx_expiry");
 			READ_INT_INI_KEY (priv->upload_timeout, gkf, "upload", "upload_timeout");
 			READ_STR_INI_KEY (priv->facebook_put_uri, gkf, "upload", "facebook_put_uri");
@@ -2619,10 +2623,16 @@ void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 
 	header = g_strdup_printf ("Linx-Expiry: %d", priv->linx_expiry);
 	headerlist = curl_slist_append (headerlist, header);
-	curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headerlist);
-	curl_easy_setopt (curl, CURLOPT_URL, put_uri);
 	g_free (header);
 
+	if (priv->linx_api_key) {
+		header = g_strdup_printf ("Linx-Api-Key: %s", priv->linx_api_key);
+		headerlist = curl_slist_append (headerlist, header);
+		g_free (header);
+	}
+	curl_easy_setopt (curl, CURLOPT_HTTPHEADER, headerlist);
+	curl_easy_setopt (curl, CURLOPT_URL, put_uri);
+	
 	// curl_easy_setopt (curl, CURLOPT_VERBOSE, 1L);
 	curl_easy_setopt (curl, CURLOPT_PUT, 1L);
 	curl_easy_setopt (curl, CURLOPT_UPLOAD, 1L);
