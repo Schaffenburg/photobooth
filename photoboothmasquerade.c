@@ -209,6 +209,7 @@ photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *s
 	gtk_image_set_from_pixbuf (GTK_IMAGE (mask->imagew), scaled_mask_pixbuf);
 	gtk_widget_show (mask->eventw);
 	gtk_widget_show (mask->imagew);
+	g_object_unref (scaled_mask_pixbuf);
 	mask->active = TRUE;
 }
 
@@ -238,7 +239,6 @@ photo_booth_mask_new (guint index, GtkFixed *fixed, const gchar *filename, gint 
 	mask->print_scaling_factor = print_scaling_factor;
 	mask->dragstartoffsetx = mask->dragstartoffsety = 0;
 	mask->dragging = FALSE;
-	mask->eventw = gtk_event_box_new ();
 	gtk_fixed_put (mask->fixed, mask->eventw, 0, 0);
 	gtk_container_add (GTK_CONTAINER (mask->eventw), mask->imagew);
 	mask->screen_offset_x = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (fixed), "screen-offset-x"));
@@ -304,7 +304,8 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 
 	for (i = 0; i < n_masks; i++)
 	{
-		const gchar *filename, *maskpath;
+		const gchar *filename;
+		gchar *maskpath;
 		gint offset_x, offset_y;
 		PhotoBoothMask *mask;
 
@@ -326,6 +327,7 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 		mask = photo_booth_mask_new (i, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
 		masq->masks = g_list_append (masq->masks, mask);
 		json_reader_end_element (reader);
+		g_free (maskpath);
 	}
 	g_object_unref (reader);
 	g_object_unref (parser);
@@ -375,9 +377,10 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 
 	if (GST_VALUE_HOLDS_LIST (faces) /*&& gst_debug_category_get_threshold (photo_booth_masquerade_debug) > GST_LEVEL_TRACE*/)
 	{
-		const gchar *contents = g_strdup_value_contents (faces);
+		gchar *contents = g_strdup_value_contents (faces);
 		n_faces = gst_value_list_get_size (faces);
 		GST_DEBUG ("Detected objects: %s face=%i masks=%i", *(&contents), n_faces, n_masks);
+		g_free (contents);
 	}
 
 	for (int i = 0; i < n_faces; i++)

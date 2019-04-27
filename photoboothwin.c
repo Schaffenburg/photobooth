@@ -28,6 +28,7 @@ struct _PhotoBoothWindowPrivate
 	GtkLabel *countdown_label;
 	GtkScale *copies;
 	gint countdown;
+	guint clock_id;
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothWindow, photo_booth_window, GTK_TYPE_APPLICATION_WINDOW);
@@ -104,11 +105,14 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_button_set_label (win->button_print, _("Print photo"));
 	gtk_button_set_label (win->button_upload, _("Upload photo"));
 	gtk_button_set_label (win->button_publish, _("Publish photo"));
-	g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
+	priv->clock_id = g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }
 
 static void photo_booth_window_dispose (GObject *object)
 {
+	PhotoBoothWindow *win = PHOTO_BOOTH_WINDOW (object);
+	PhotoBoothWindowPrivate *priv = photo_booth_window_get_instance_private (win);
+	g_source_remove (priv->clock_id);
 	G_OBJECT_CLASS (photo_booth_window_parent_class)->dispose (object);
 }
 

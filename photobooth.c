@@ -412,6 +412,14 @@ static void photo_booth_finalize (GObject *object)
 		g_thread_join (priv->publish_thread);
 	if (priv->linx_upload_thread)
 		g_thread_join (priv->linx_upload_thread);
+	if (priv->audio_pipeline) {
+		gst_element_set_state (priv->audio_pipeline, GST_STATE_NULL);
+		gst_object_unref (priv->audio_pipeline);
+	}
+	if (pb->pipeline) {
+		gst_element_set_state (pb->pipeline, GST_STATE_NULL);
+		gst_object_unref (pb->pipeline);
+	}
 	g_object_unref (priv->led);
 }
 
@@ -662,7 +670,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			const gchar *filename;
 			GMatchInfo *match_info;
 			GRegex *regex;
-			gchar *pattern = g_strdup_printf("(?<filename>%s)(?<number>\\d+)", filenameprefix);
+			const gchar *pattern = g_strdup_printf("(?<filename>%s)(?<number>\\d+)", filenameprefix);
 			GST_TRACE ("save_path_base_name regex pattern = '%s'", pattern);
 			regex = g_regex_new (pattern, 0, 0, &error);
 			if (error) {
@@ -1483,6 +1491,7 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	GST_DEBUG_OBJECT (pb, "overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
 	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
+	g_object_unref (overlay_pixbuf);
 
 	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
 		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
@@ -2615,7 +2624,8 @@ size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
 void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	gchar *header, *filename, *put_uri;
+	gchar *header;
+	const gchar *filename, *put_uri;
 	CURLcode res;
 	CURL *curl;
 	struct curl_httppost* post = NULL;
@@ -2676,8 +2686,6 @@ void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 
 	GST_DEBUG ("curl_easy_perform() finished. response='%s'", buf->str);
 
-	g_free (filename);
-	g_free (put_uri);
 	g_string_free (buf, TRUE);
 	g_mutex_unlock (&priv->upload_mutex);
 
