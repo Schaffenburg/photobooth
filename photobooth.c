@@ -48,6 +48,7 @@
 typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 typedef enum { SAVE_NEVER, SAVE_ASK, SAVE_PRINTED, SAVE_ALL } save_t;
 typedef enum { UPLOAD_NEVER, UPLOAD_ASK, UPLOAD_PRINTED, UPLOAD_ALL } upload_t;
+typedef enum { FACEDETECT_DISABLED, FACEDETECT_ENABLEABLE, FACEDETECT_ENABLED } facedetect_t;
 
 typedef struct _PhotoBoothPrivate PhotoBoothPrivate;
 
@@ -126,7 +127,7 @@ struct _PhotoBoothPrivate
 	gfloat             qrcode_scale;
 
 	PhotoBoothMasquerade *masquerade;
-	gboolean           do_facedetect;
+	facedetect_t       enable_facedetect;
 	gchar              *masks_dir;
 	gchar              *masks_json;
 	GstElement         *mask_bin;
@@ -142,7 +143,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_SAVE_PATH_TEMPLATE "./snapshot%03d.jpg"
 #define DEFAULT_SCREENSAVER_TIMEOUT -1
 #define DEFAULT_FLIP TRUE
-#define DEFAULT_FACEDETECT FALSE
+#define DEFAULT_FACEDETECT FACEDETECT_DISABLED
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
@@ -336,7 +337,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->qrcode_scale = DEFAULT_QRCODE_SCALE;
 	priv->qrcode_base_uri = DEFAULT_QRCODE_BASE_URI;
 	priv->state_change_watchdog_timeout_id = 0;
-	priv->do_facedetect = DEFAULT_FACEDETECT;
+	priv->enable_facedetect = DEFAULT_FACEDETECT;
 	priv->masquerade = NULL;
 	priv->masks_dir = NULL;
 	priv->masks_json = NULL;
@@ -540,7 +541,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_STR_INI_KEY (priv->overlay_image, gkf, "general", "overlay_image");
 			READ_INT_INI_KEY (priv->screensaver_timeout, gkf, "general", "screensaver_timeout");
 			READ_STR_INI_KEY (screensaverfile, gkf, "general", "screensaver_file");
-			READ_BOOL_INI_KEY (priv->do_facedetect, gkf, "general", "facedetection");
+			READ_INT_INI_KEY (priv->enable_facedetect, gkf, "general", "facedetection");
 			if (screensaverfile)
 			{
 				gchar *screensaverabsfilename;
@@ -1122,7 +1123,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 	g_object_set (G_OBJECT (video_filter), "caps", caps, NULL);
 	gst_caps_unref (caps);
 
-	if (priv->do_facedetect)
+	if (priv->enable_facedetect > FACEDETECT_DISABLED)
 		video_facedetect = gst_element_factory_make ("facedetect", "video-facedetect");
 
 	if (!(mjpeg_source && mjpeg_filter && mjpeg_parser && mjpeg_decoder && video_scale && video_convert && video_flip && video_filter))
@@ -1142,6 +1143,9 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 		if (gst_element_link_many (mjpeg_source, mjpeg_filter, mjpeg_parser, mjpeg_decoder, video_scale, video_convert, video_flip, video_filter, video_facedetect, detect_convert, NULL))
 		{
 			GST_INFO_OBJECT (priv->masquerade, "facedetect plugin will be used!");
+			if (priv->enable_facedetect == FACEDETECT_ENABLED) {
+				gtk_switch_set_active (priv->win->switch_facedetect, TRUE);
+			}
 			pad = gst_element_get_static_pad (detect_convert, "src");
 		} else {
 			gst_object_unref (video_facedetect);
@@ -1204,7 +1208,7 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 	g_object_set (photo_gamma, "gamma", 1.0, NULL);
 	photo_tee = gst_element_factory_make ("tee", "photo-tee");
 
-	if (priv->do_facedetect)
+	if (priv->enable_facedetect > FACEDETECT_DISABLED)
 		photo_facedetect = gst_element_factory_make ("facedetect", "photo-facedetect");
 
 	if (!(photo_bin && photo_source && photo_decoder && photo_scale && photo_filter && photo_overlay && photo_convert && photo_tee))
@@ -1410,7 +1414,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		}
 		case GST_MESSAGE_ELEMENT:
 		{
-			if (!priv->masquerade)
+			if (!gtk_switch_get_active (priv->win->switch_facedetect))
 				break;
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
@@ -1480,7 +1484,7 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
 	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
 
-	if (priv->do_facedetect) {
+	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
 		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
 		GValue off = G_VALUE_INIT;
 		g_value_init (&off, G_TYPE_INT);
@@ -1573,6 +1577,9 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	photo_booth_window_hide_cursor (priv->win);
 	gtk_widget_show (GTK_WIDGET (priv->win->switch_flip));
+	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
+		gtk_widget_show (GTK_WIDGET (priv->win->switch_facedetect));
+	}
 
 	if (priv->screensaver_timeout > 0)
 		priv->screensaver_timeout_id = g_timeout_add_seconds (priv->screensaver_timeout, (GSourceFunc) photo_booth_screensaver, pb);
@@ -1744,13 +1751,26 @@ void photo_booth_flip_switched (GtkSwitch *widget, gboolean state, PhotoBoothWin
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	priv = photo_booth_get_instance_private (pb);
-	GST_INFO_OBJECT (pb, "photo_booth_flip_switched state %i", state);
+	GST_INFO_OBJECT (pb, "FLIP switched to state %i", state);
 	priv->do_flip = state;
-	GstElement *video_flip = gst_bin_get_by_name (GST_BIN (pb->video_bin), "video-flip");
-	g_object_set (G_OBJECT (video_flip), "method", priv->do_flip?4:0, NULL);
-	gst_object_unref (video_flip);
+	if (pb->video_bin) {
+		GstElement *video_flip = gst_bin_get_by_name (GST_BIN (pb->video_bin), "video-flip");
+		g_object_set (G_OBJECT (video_flip), "method", priv->do_flip?4:0, NULL);
+		gst_object_unref (video_flip);
+	}
 }
 
+void photo_booth_facedetect_switched (GtkSwitch *widget, gboolean state, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	priv = photo_booth_get_instance_private (pb);
+	GST_INFO_OBJECT (pb, "Facedetect switched to state %i", state);
+	if (priv->masquerade && state == FALSE)
+	{
+		photo_booth_masquerade_facedetect_update (priv->masquerade, NULL); // hide all masks
+	}
+}
 
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
 {
@@ -1832,6 +1852,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
+	gtk_widget_hide (GTK_WIDGET (priv->win->switch_facedetect));
 
 	if (priv->countdown > 1)
 	{

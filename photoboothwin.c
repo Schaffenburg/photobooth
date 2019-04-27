@@ -73,6 +73,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_upload);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_publish);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, switch_flip);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, switch_facedetect);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_clock);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_printer);
@@ -125,6 +126,8 @@ void photo_booth_window_add_gtkgstwidget (PhotoBoothWindow *win, GtkWidget *gtkg
 
 gboolean _pbw_clock_tick (GtkLabel *status_clock)
 {
+	if (!GTK_IS_LABEL (status_clock))
+		return FALSE;
 	gchar clockstr[200];
 	time_t now;
 	struct tm *now_tm;
@@ -157,17 +160,16 @@ void photo_booth_window_set_spinner (PhotoBoothWindow *win, gboolean active)
 gboolean _pbw_tick_countdown (PhotoBoothWindow *win)
 {
 	PhotoBoothWindowPrivate *priv;
-	gchar *str;
+	const gchar *str;
 	priv = photo_booth_window_get_instance_private (win);
 	priv->countdown--;
 	GST_LOG ("_pbw_tick_countdown %i", priv->countdown);
 	if (priv->countdown > 0)
 	{
-		gchar *status_str = g_strdup_printf (_("Taking photo in %d seconds..."), priv->countdown);
+		const gchar *status_str = g_strdup_printf (_("Taking photo in %d seconds..."), priv->countdown);
 		gtk_label_set_text (win->status, status_str);
 		str = g_strdup_printf ("%d...", priv->countdown);
 		gtk_label_set_text (priv->countdown_label, str);
-		g_free (str);
 	}
 	else if (priv->countdown == 0)
 	{

@@ -166,6 +166,23 @@
               </packing>
             </child>
             <child>
+              <object class="GtkSwitch" id="switch_facedetect">
+                <property name="width_request">168</property>
+                <property name="height_request">72</property>
+                <property name="visible">False</property>
+                <property name="can_focus">True</property>
+                <property name="opacity">0.6</property>
+                <property name="margin_top">10</property>
+                <property name="margin_bottom">10</property>
+                <property name="active">False</property>
+                <signal name="state-set" handler="photo_booth_facedetect_switched" object="PhotoBoothWindow" swapped="no"/>
+              </object>
+              <packing>
+                <property name="x">150</property>
+                <property name="y">80</property>
+              </packing>
+            </child>
+            <child>
               <object class="GtkImage" id="image">
                 <property name="width_request">1280</property>
                 <property name="height_request">1024</property>
