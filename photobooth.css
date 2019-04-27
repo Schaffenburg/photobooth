@@ -9,6 +9,10 @@ button.print {
 	background: rgba (128, 255, 82, 0.8);
 }
 
+button.publish {
+	background: rgba (82, 166, 255, 0.8);
+}
+
 button.upload {
 	background: rgba (82, 166, 255, 0.8);
 }
