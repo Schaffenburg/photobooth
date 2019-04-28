@@ -1804,7 +1804,6 @@ void photo_booth_masq_changed (GtkComboBox *widget, PhotoBoothWindow *win)
 		priv->do_masquerade = TRUE;
 		photo_booth_masquerade_set_primary_mask (priv->masquerade, index);
 	} else {
-		GST_INFO ("masquerade disabled");
 		photo_booth_masquerade_facedetect_update (priv->masquerade, NULL);
 		priv->do_masquerade = FALSE;
 	}

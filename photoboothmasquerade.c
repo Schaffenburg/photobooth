@@ -298,8 +298,6 @@ static void photo_booth_masquerade_init (PhotoBoothMasquerade *masq)
 
 void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor)
 {
-	GST_INFO ("photo_booth_masquerade_init_masks");
-
 	JsonParser *parser;
 	JsonNode *root;
 	JsonReader *reader;
@@ -324,16 +322,16 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 
 	n_masks = json_reader_count_elements (reader);
 
-	GST_INFO ("found %i masks in list", n_masks);
+	GST_DEBUG ("found %i masks in list", n_masks);
 
 	masq->store = gtk_list_store_new (NUM_COLS, G_TYPE_INT, G_TYPE_STRING, GDK_TYPE_PIXBUF);
 	GtkTreeIter iter;
 	gtk_list_store_append (masq->store, &iter);
-	gtk_list_store_set (masq->store, &iter, COL_INDEX, -1, COL_TEXT, _("no mask"), COL_ICON, gdk_pixbuf_new (0, 0, 8, 1, 1), -1);
+	gtk_list_store_set (masq->store, &iter, COL_INDEX, -1, COL_TEXT, _("No mask"), COL_ICON, NULL, -1);
 
 	for (i = 0; i < n_masks; i++)
 	{
-		const gchar *filename;
+		const gchar *filename, *title;
 		gchar *maskpath;
 		gint offset_x, offset_y;
 		PhotoBoothMask *mask;
@@ -352,12 +350,16 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 			goto fail;
 		offset_y = json_reader_get_int_value (reader);
 		json_reader_end_element (reader);
+		if (!json_reader_read_element (reader, 3))
+			goto fail;
+		title = json_reader_get_string_value (reader);
+		json_reader_end_element (reader);
 		maskpath = g_strconcat (dir, filename, NULL);
 		mask = photo_booth_mask_new (index, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
 		if (mask) {
 			priv->masks = g_list_append (priv->masks, mask);
 			gtk_list_store_append (masq->store, &iter);
-			gtk_list_store_set (masq->store, &iter, COL_INDEX, index, COL_TEXT, filename, COL_ICON, mask->pixbuf_icon, -1);
+			gtk_list_store_set (masq->store, &iter, COL_INDEX, index, COL_TEXT, title, COL_ICON, mask->pixbuf_icon, -1);
 			index++;
 		}
 		json_reader_end_element (reader);
@@ -378,7 +380,7 @@ void photo_booth_masquerade_set_primary_mask (PhotoBoothMasquerade *masq, guint 
 {
 	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
 	priv->primary_mask_index = index;
-	GST_WARNING ("setting primary mask index %i", priv->primary_mask_index);
+	GST_DEBUG ("setting primary mask index %i", priv->primary_mask_index);
 	photo_booth_masquerade_facedetect_update (masq, NULL);
 }
 
