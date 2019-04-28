@@ -129,6 +129,7 @@ struct _PhotoBoothPrivate
 
 	PhotoBoothMasquerade *masquerade;
 	facedetect_t       enable_facedetect;
+	gboolean           do_masquerade;
 	gchar              *masks_dir;
 	gchar              *masks_json;
 	GstElement         *mask_bin;
@@ -341,6 +342,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->qrcode_base_uri = DEFAULT_QRCODE_BASE_URI;
 	priv->state_change_watchdog_timeout_id = 0;
 	priv->enable_facedetect = DEFAULT_FACEDETECT;
+	priv->do_masquerade = FALSE;
 	priv->masquerade = NULL;
 	priv->masks_dir = NULL;
 	priv->masks_json = NULL;
@@ -724,6 +726,16 @@ static GstPadProbeReturn _gst_video_probecb (GstPad * pad, GstPadProbeInfo * inf
 {
 	GST_DEBUG_OBJECT (pad, "drop video");
 	return GST_PAD_PROBE_DROP;
+}
+
+static void _restart_screensaver_timeout (PhotoBooth *pb)
+{
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	if (priv->screensaver_timeout > 0) {
+		if (priv->screensaver_timeout_id)
+			g_source_remove (priv->screensaver_timeout_id);
+		priv->screensaver_timeout_id = g_timeout_add_seconds (priv->screensaver_timeout, (GSourceFunc) photo_booth_screensaver, pb);
+	}
 }
 
 void _play_event_sound (PhotoBoothPrivate *priv, sound_t sound)
@@ -1157,7 +1169,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 		{
 			GST_INFO_OBJECT (priv->masquerade, "facedetect plugin will be used!");
 			if (priv->enable_facedetect == FACEDETECT_ENABLED) {
-				gtk_switch_set_active (priv->win->switch_facedetect, TRUE);
+				gtk_combo_box_set_active (priv->win->combo_masquerade, 1);;
 			}
 			pad = gst_element_get_static_pad (detect_convert, "src");
 		} else {
@@ -1428,7 +1440,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 		}
 		case GST_MESSAGE_ELEMENT:
 		{
-			if (!gtk_switch_get_active (priv->win->switch_facedetect))
+			if (!priv->do_masquerade)
 				break;
 			const GstStructure *structure;
 			structure = gst_message_get_structure (message);
@@ -1499,7 +1511,7 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
 	g_object_unref (overlay_pixbuf);
 
-	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
+	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE && priv->masquerade == NULL) {
 		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
 		GValue off = G_VALUE_INIT;
 		g_value_init (&off, G_TYPE_INT);
@@ -1512,6 +1524,7 @@ static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 		GST_DEBUG_OBJECT (pb, "initialize masquerade with container %" GST_PTR_FORMAT " print xfactor=%f yfactor=%f", priv->win->fixed, xfactor, yfactor);
 		priv->masquerade = photo_booth_masquerade_new ();
 		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json, xfactor);
+		photo_booth_window_init_masq_combobox (priv->win, priv->masquerade->store);
 	}
 
 	return FALSE;
@@ -1594,11 +1607,10 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 		photo_booth_window_hide_cursor (priv->win);
 	gtk_widget_show (GTK_WIDGET (priv->win->switch_flip));
 	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
-		gtk_widget_show (GTK_WIDGET (priv->win->switch_facedetect));
+		gtk_widget_show (GTK_WIDGET (priv->win->combo_masquerade));
 	}
+	_restart_screensaver_timeout (pb);
 
-	if (priv->screensaver_timeout > 0)
-		priv->screensaver_timeout_id = g_timeout_add_seconds (priv->screensaver_timeout, (GSourceFunc) photo_booth_screensaver, pb);
 	return FALSE;
 }
 
@@ -1774,18 +1786,29 @@ void photo_booth_flip_switched (GtkSwitch *widget, gboolean state, PhotoBoothWin
 		g_object_set (G_OBJECT (video_flip), "method", priv->do_flip?4:0, NULL);
 		gst_object_unref (video_flip);
 	}
+	_restart_screensaver_timeout (pb);
 }
 
-void photo_booth_facedetect_switched (GtkSwitch *widget, gboolean state, PhotoBoothWindow *win)
+void photo_booth_masq_changed (GtkComboBox *widget, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
-	priv = photo_booth_get_instance_private (pb);
-	GST_INFO_OBJECT (pb, "Facedetect switched to state %i", state);
-	if (priv->masquerade && state == FALSE)
-	{
-		photo_booth_masquerade_facedetect_update (priv->masquerade, NULL); // hide all masks
+	GtkTreeIter iter;
+	gint index = -1; // -1 = masquerade disabled
+	gboolean active = gtk_combo_box_get_active_iter (widget, &iter);
+	if (active) {
+		gtk_tree_model_get (gtk_combo_box_get_model (widget), &iter, COL_INDEX, &index, -1);
+		GST_INFO ("masquerade changed mask to index %i", index);
 	}
+	if (index > -1) {
+		priv->do_masquerade = TRUE;
+		photo_booth_masquerade_set_primary_mask (priv->masquerade, index);
+	} else {
+		GST_INFO ("masquerade disabled");
+		photo_booth_masquerade_facedetect_update (priv->masquerade, NULL);
+		priv->do_masquerade = FALSE;
+	}
+	_restart_screensaver_timeout (pb);
 }
 
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
@@ -1868,7 +1891,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
-	gtk_widget_hide (GTK_WIDGET (priv->win->switch_facedetect));
+	gtk_widget_hide (GTK_WIDGET (priv->win->combo_masquerade));
 
 	if (priv->countdown > 1)
 	{
@@ -2103,7 +2126,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			}
 			photo_booth_window_set_spinner (priv->win, FALSE);
 
-			if (gtk_switch_get_active (priv->win->switch_facedetect)) {
+			if (priv->do_masquerade) {
 				photo_booth_change_state (pb, PB_STATE_MASQUERADE_PHOTO);
 				GST_DEBUG_OBJECT (pb, "waiting for user to place masks");
 			} else {
@@ -2136,7 +2159,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		case PB_STATE_ASK_PRINT:
 		{
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
-			if (gtk_switch_get_active (priv->win->switch_facedetect)) {
+			if (priv->do_masquerade) {
 				GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe and open print dialoge");
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_print, pb);
 				photo_booth_masquerade_clear_mask_bin (priv->masquerade, priv->mask_bin);
@@ -2241,7 +2264,7 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 
 	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 
-	if (gtk_switch_get_active (priv->win->switch_facedetect)) {
+	if (priv->do_masquerade) {
 		photo_booth_masquerade_create_overlays (priv->masquerade, priv->mask_bin);
 	}
 

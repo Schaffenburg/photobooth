@@ -33,7 +33,7 @@ typedef struct _PhotoBoothMasqueradeClass         PhotoBoothMasqueradeClass;
 struct _PhotoBoothMasquerade
 {
 	GObject parent;
-	GList *masks;
+	GtkListStore *store;
 };
 
 struct _PhotoBoothMasqueradeClass
@@ -47,6 +47,10 @@ void                  photo_booth_masquerade_init_masks        (PhotoBoothMasque
 void                  photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstStructure *structure);
 void                  photo_booth_masquerade_create_overlays   (PhotoBoothMasquerade *masq, GstElement *mask_bin);
 void                  photo_booth_masquerade_clear_mask_bin    (PhotoBoothMasquerade *masq, GstElement *mask_bin);
+void                  photo_booth_masquerade_set_primary_mask  (PhotoBoothMasquerade *masq, guint index);
+
+enum {COL_INDEX, COL_TEXT, COL_ICON, NUM_COLS};
+#define MASK_ICON_SIZE 64
 
 G_END_DECLS
 

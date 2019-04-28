@@ -35,7 +35,7 @@ struct _PhotoBoothMask
 	gboolean active;
 	const gchar *filename;
 	GtkFixed *fixed;
-	GdkPixbuf *pixbuf;
+	GdkPixbuf *pixbuf, *pixbuf_icon, *pixbuf_copy;
 	GtkWidget *imagew, *eventw;
 	gint screen_offset_x, screen_offset_y;
 	gint offset_x, offset_y;
@@ -71,6 +71,8 @@ photo_booth_mask_finalize (GObject *object)
 	mask = PHOTO_BOOTH_MASK (object);
 	GST_DEBUG_OBJECT (mask, "finalize");
 	g_object_unref (mask->pixbuf);
+	g_object_unref (mask->pixbuf_icon);
+	g_object_unref (mask->pixbuf_copy);
 	mask->imagew = mask->eventw = NULL;
 	G_OBJECT_CLASS (photo_booth_mask_parent_class)->finalize (object);
 }
@@ -86,7 +88,7 @@ static void
 photo_booth_mask_init (PhotoBoothMask *mask)
 {
 	GST_LOG_OBJECT (mask, "mask init");
-	mask->pixbuf = NULL;
+	mask->pixbuf = mask->pixbuf_icon = mask->pixbuf_copy = NULL;
 	mask->eventw = gtk_event_box_new ();
 	mask->imagew = gtk_image_new ();
 	gtk_widget_set_can_focus (mask->eventw, FALSE);
@@ -154,7 +156,7 @@ photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *mask_bin)
 		g_assert (lret == GST_PAD_LINK_OK);
 	}
 
-	g_object_set (photo_overlay, "pixbuf", mask->pixbuf,
+	g_object_set (photo_overlay, "pixbuf", mask->pixbuf_copy,
 	                             "overlay-width", width,
 	                             "overlay-height", height,
 	                             "offset-x", x,
@@ -232,8 +234,15 @@ photo_booth_mask_new (guint index, GtkFixed *fixed, const gchar *filename, gint 
 	mask->index = index;
 	mask->filename = filename;
 	mask->active = FALSE;
-	mask->fixed = g_object_ref (fixed);
 	mask->pixbuf = gdk_pixbuf_new_from_file_at_scale (filename, -1, -1, FALSE, &error);
+	if (error) {
+		GST_WARNING_OBJECT (mask, "couldn't load mask file '%s': %s", filename, error->message);
+		g_error_free (error);
+		return NULL;
+	}
+	mask->pixbuf_icon = gdk_pixbuf_new_from_file_at_size (filename, MASK_ICON_SIZE, MASK_ICON_SIZE, &error);
+	mask->pixbuf_copy = gdk_pixbuf_copy (mask->pixbuf); // because GStreamer's gdkpixbufoverlay modifies the channel layout in-place
+	mask->fixed = g_object_ref (fixed);
 	mask->offset_x = offset_x;
 	mask->offset_y = offset_y;
 	mask->print_scaling_factor = print_scaling_factor;
@@ -250,13 +259,23 @@ photo_booth_mask_new (guint index, GtkFixed *fixed, const gchar *filename, gint 
 	return mask;
 }
 
-G_DEFINE_TYPE (PhotoBoothMasquerade, photo_booth_masquerade, G_TYPE_OBJECT);
+typedef struct _PhotoBoothMasqueradePrivate PhotoBoothMasqueradePrivate;
+
+struct _PhotoBoothMasqueradePrivate
+{
+	guint primary_mask_index;
+	GList *masks;
+};
+
+G_DEFINE_TYPE_WITH_PRIVATE (PhotoBoothMasquerade, photo_booth_masquerade, G_TYPE_OBJECT);
 
 static void photo_booth_masquerade_finalize (GObject *object)
 {
 	PhotoBoothMasquerade *masq = PHOTO_BOOTH_MASQUERADE (object);
-	g_list_free_full (masq->masks, g_object_unref);
-	masq->masks = NULL;
+	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
+
+	g_list_free_full (priv->masks, g_object_unref);
+	priv->masks = NULL;
 	G_OBJECT_CLASS (photo_booth_masquerade_parent_class)->finalize (object);
 }
 
@@ -272,16 +291,21 @@ static void photo_booth_masquerade_class_init (PhotoBoothMasqueradeClass *klass)
 static void photo_booth_masquerade_init (PhotoBoothMasquerade *masq)
 {
 	GST_LOG_OBJECT (masq, "init masquerade");
-	masq->masks = NULL;
+	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
+	priv->masks = NULL;
+	priv->primary_mask_index = 0;
 }
 
 void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor)
 {
+	GST_INFO ("photo_booth_masquerade_init_masks");
+
 	JsonParser *parser;
 	JsonNode *root;
 	JsonReader *reader;
 	GError *error = NULL;
-	gint i, n_masks;
+	gint i, n_masks, index = 0;
+	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
 
 	if (!list_json)
 		return;
@@ -301,6 +325,11 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 	n_masks = json_reader_count_elements (reader);
 
 	GST_INFO ("found %i masks in list", n_masks);
+
+	masq->store = gtk_list_store_new (NUM_COLS, G_TYPE_INT, G_TYPE_STRING, GDK_TYPE_PIXBUF);
+	GtkTreeIter iter;
+	gtk_list_store_append (masq->store, &iter);
+	gtk_list_store_set (masq->store, &iter, COL_INDEX, -1, COL_TEXT, _("no mask"), COL_ICON, gdk_pixbuf_new (0, 0, 8, 1, 1), -1);
 
 	for (i = 0; i < n_masks; i++)
 	{
@@ -324,8 +353,13 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 		offset_y = json_reader_get_int_value (reader);
 		json_reader_end_element (reader);
 		maskpath = g_strconcat (dir, filename, NULL);
-		mask = photo_booth_mask_new (i, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
-		masq->masks = g_list_append (masq->masks, mask);
+		mask = photo_booth_mask_new (index, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
+		if (mask) {
+			priv->masks = g_list_append (priv->masks, mask);
+			gtk_list_store_append (masq->store, &iter);
+			gtk_list_store_set (masq->store, &iter, COL_INDEX, index, COL_TEXT, filename, COL_ICON, mask->pixbuf_icon, -1);
+			index++;
+		}
 		json_reader_end_element (reader);
 		g_free (maskpath);
 	}
@@ -338,6 +372,14 @@ fail:
 	g_error_free (error);
 	g_object_unref (reader);
 	g_object_unref (parser);
+}
+
+void photo_booth_masquerade_set_primary_mask (PhotoBoothMasquerade *masq, guint index)
+{
+	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
+	priv->primary_mask_index = index;
+	GST_WARNING ("setting primary mask index %i", priv->primary_mask_index);
+	photo_booth_masquerade_facedetect_update (masq, NULL);
 }
 
 static gint _pbm_sort_faces_by_xpos (const GValue *f1, const GValue *f2)
@@ -356,18 +398,19 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	if (!IS_PHOTO_BOOTH_MASQUERADE (masq))
 		return;
 
-	guint i, n_masks, n_faces = 0;
-	GList *masks, *sorted_faces = NULL;
+	guint i, n_masks, mask_index, n_faces = 0;
+	GList *sorted_faces = NULL;
 	const GValue *faces = NULL;
 	int state = 0;
+	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
 
 	if (structure) {
 		faces = gst_structure_get_value (structure, "faces");
 		gst_structure_get_int (structure, "state", &state);
 	} else {
-		GST_WARNING ("GstStructure missing for face detection!");
+		GST_LOG ("GstStructure missing for face detection, hide all");
 	}
-	n_masks = g_list_length (masq->masks);
+	n_masks = g_list_length (priv->masks);
 
 	if ((PhotoboothState) state > PB_STATE_TAKING_PHOTO)
 	{
@@ -379,7 +422,7 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 	{
 		gchar *contents = g_strdup_value_contents (faces);
 		n_faces = gst_value_list_get_size (faces);
-		GST_LOG ("Detected objects: %s face=%i masks=%i", *(&contents), n_faces, n_masks);
+		GST_LOG ("Detected objects: %s faces=%i masks=%i", *(&contents), n_faces, n_masks);
 		g_free (contents);
 	}
 
@@ -394,11 +437,13 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 		sorted_faces = g_list_reverse (sorted_faces);
 	}
 
+	mask_index = priv->primary_mask_index;
 	for (i = 0; i < n_masks; i++)
 	{
 		PhotoBoothMask *mask;
-		masks = g_list_nth (masq->masks, i);
-		mask = masks->data;
+		if (mask_index >= n_masks)
+			mask_index = 0;
+		mask = (g_list_nth (priv->masks, mask_index))->data;
 		if (mask && i < n_faces)
 		{
 			const GValue *face = g_list_nth_data (sorted_faces, i);
@@ -406,6 +451,7 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 		} else {
 			photo_booth_mask_hide (mask);
 		}
+		mask_index++;
 	}
 }
 
@@ -413,8 +459,9 @@ void
 photo_booth_masquerade_create_overlays (PhotoBoothMasquerade *masq, GstElement *mask_bin)
 {
 	GList *m;
+	PhotoBoothMasqueradePrivate *priv = photo_booth_masquerade_get_instance_private (masq);
 	GST_DEBUG_OBJECT (mask_bin, "photo_booth_masquerade_create_overlays");
-	for (m = masq->masks; m != NULL; m = m->next) {
+	for (m = priv->masks; m != NULL; m = m->next) {
 		if (PHOTO_BOOTH_MASK (m->data)->active) {
 			photo_booth_mask_create_overlay (m->data, mask_bin);
 		}

@@ -18,6 +18,7 @@
 #include <glib/gstdio.h>
 #include "photobooth.h"
 #include "photoboothwin.h"
+#include "photoboothmasquerade.h"
 
 typedef struct _PhotoBoothWindowPrivate PhotoBoothWindowPrivate;
 
@@ -74,7 +75,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_upload);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_publish);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, switch_flip);
-	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, switch_facedetect);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, combo_masquerade);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_clock);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_printer);
@@ -250,6 +251,22 @@ gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, g
 	if (intval == 1)
 		return g_strdup (_("1 print"));
 	return g_strdup_printf (_("%d prints"), intval);
+}
+
+void photo_booth_window_init_masq_combobox (PhotoBoothWindow *win, GtkListStore *store)
+{
+	gtk_combo_box_set_model (win->combo_masquerade, GTK_TREE_MODEL (store));
+	GtkCellRenderer *renderer;
+
+	GST_INFO ("init masquerade combobox");
+
+	renderer = gtk_cell_renderer_text_new();
+	gtk_cell_layout_pack_start (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, TRUE);
+	gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, "text", COL_TEXT, NULL);
+
+	renderer = gtk_cell_renderer_pixbuf_new();
+	gtk_cell_layout_pack_start (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, FALSE);
+	gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, "pixbuf", COL_ICON, NULL);
 }
 
 PhotoBoothWindow * photo_booth_window_new (PhotoBooth *pb)
