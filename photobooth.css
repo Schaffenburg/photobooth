@@ -42,6 +42,23 @@ button.cancel {
 	text-shadow: 2px 2px 1px #79754a;
 }
 
+.toggle_flip {
+	font-size: 24px;
+	color: rgba (16, 16, 0, 1);
+	text-shadow: 2px 2px 1px #79754a;
+	background: rgba (200, 200, 82, 0.1);
+}
+
+.toggle_flip:active {
+	color: rgba (16, 16, 0, 1);
+	background: rgba (200, 200, 82, 1.0);
+}
+
+.toggle_flip:checked {
+	color: rgba (0, 0, 0, 1);
+	background: rgba (200, 200, 82, 0.8);
+}
+
 .status_label {
 	color: white;
 	font-weight: bold;

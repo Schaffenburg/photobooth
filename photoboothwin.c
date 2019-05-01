@@ -74,7 +74,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_print);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_upload);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_publish);
-	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, switch_flip);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, toggle_flip);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, combo_masquerade);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_clock);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status);
@@ -106,6 +106,7 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_button_set_label (win->button_print, _("Print photo"));
 	gtk_button_set_label (win->button_upload, _("Upload photo"));
 	gtk_button_set_label (win->button_publish, _("Publish photo"));
+	gtk_button_set_label (win->toggle_flip, _("Flip video"));
 	priv->clock_id = g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }
 

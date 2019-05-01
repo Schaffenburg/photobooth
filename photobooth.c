@@ -175,7 +175,7 @@ static void photo_booth_dispose (GObject *object);
 static void photo_booth_finalize (GObject *object);
 PhotoBooth *photo_booth_new (void);
 void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win);
-void photo_booth_flip_switched (GtkSwitch *widget, gboolean state, PhotoBoothWindow *win);
+void photo_booth_flip_toggled (GtkToggleButton *widget, PhotoBoothWindow *win);
 void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win);
 void photo_booth_cancel (PhotoBooth *pb);
 
@@ -292,6 +292,7 @@ static void photo_booth_init (PhotoBooth *pb)
 
 	priv->capture_thread = NULL;
 	priv->countdown = DEFAULT_COUNTDOWN;
+	priv->do_flip = DEFAULT_FLIP;
 	priv->hide_cursor = DEFAULT_HIDE_CURSOR;
 	priv->preview_timeout = 0;
 	priv->preview_timeout_id = 0;
@@ -383,6 +384,7 @@ static void photo_booth_setup_window (PhotoBooth *pb)
 	priv->capture_thread = g_thread_try_new ("gphoto-capture", (GThreadFunc) photo_booth_capture_thread_func, pb, NULL);
 	photo_booth_setup_gstreamer (pb);
 	photo_booth_get_printer_status (pb);
+	gtk_toggle_button_set_active (priv->win->toggle_flip, priv->do_flip);
 }
 
 static void photo_booth_activate (GApplication *app)
@@ -1605,7 +1607,7 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	gtk_label_set_text (priv->win->status, _("Touch screen to take a photo!"));
 	if (priv->hide_cursor)
 		photo_booth_window_hide_cursor (priv->win);
-	gtk_widget_show (GTK_WIDGET (priv->win->switch_flip));
+	gtk_widget_show (GTK_WIDGET (priv->win->toggle_flip));
 	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
 		gtk_widget_show (GTK_WIDGET (priv->win->combo_masquerade));
 	}
@@ -1774,11 +1776,12 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 // 		photo_booth_get_printer_status (pb);
 }
 
-void photo_booth_flip_switched (GtkSwitch *widget, gboolean state, PhotoBoothWindow *win)
+void photo_booth_flip_toggled (GtkToggleButton *widget, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	priv = photo_booth_get_instance_private (pb);
+	gboolean state = gtk_toggle_button_get_active (widget);
 	GST_INFO_OBJECT (pb, "FLIP switched to state %i", state);
 	priv->do_flip = state;
 	if (pb->video_bin) {
@@ -1889,7 +1892,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	priv = photo_booth_get_instance_private (pb);
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
-	gtk_widget_hide (GTK_WIDGET (priv->win->switch_flip));
+	gtk_widget_hide (GTK_WIDGET (priv->win->toggle_flip));
 	gtk_widget_hide (GTK_WIDGET (priv->win->combo_masquerade));
 
 	if (priv->countdown > 1)

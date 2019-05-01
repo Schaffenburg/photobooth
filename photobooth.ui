@@ -152,20 +152,20 @@
               </packing>
             </child>
             <child>
-              <object class="GtkSwitch" id="switch_flip">
-                <property name="width_request">168</property>
-                <property name="height_request">72</property>
-                <property name="visible">True</property>
+              <object class="GtkToggleButton" id="toggle_flip">
+                <property name="label" translatable="yes">flip</property>
+                <property name="width_request">160</property>
+                <property name="height_request">80</property>
                 <property name="can_focus">True</property>
-                <property name="opacity">0.6</property>
-                <property name="margin_top">10</property>
-                <property name="margin_bottom">10</property>
-                <property name="active">True</property>
-                <signal name="state-set" handler="photo_booth_flip_switched" object="PhotoBoothWindow" swapped="no"/>
+                <property name="receives_default">True</property>
+                <signal name="toggled" handler="photo_booth_flip_toggled" object="PhotoBoothWindow" swapped="no"/>
+                <style>
+                  <class name="toggle_flip"/>
+                </style>
               </object>
               <packing>
-                <property name="x">950</property>
-                <property name="y">80</property>
+                <property name="x">1200</property>
+                <property name="y">64</property>
               </packing>
             </child>
             <child>
