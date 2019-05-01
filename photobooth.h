@@ -94,6 +94,7 @@ typedef enum
 gchar *G_template_filename;
 gchar *G_stylesheet_filename;
 GHashTable *G_strings_table;
+#undef _
 #define _(key) (G_strings_table && g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
 #define PHOTO_MASKOVERLAY_NAME_TEMPLATE "photo-maskoverlay-%02d"
 

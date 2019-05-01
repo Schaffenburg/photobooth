@@ -106,7 +106,7 @@ static void photo_booth_window_init (PhotoBoothWindow *win)
 	gtk_button_set_label (win->button_print, _("Print photo"));
 	gtk_button_set_label (win->button_upload, _("Upload photo"));
 	gtk_button_set_label (win->button_publish, _("Publish photo"));
-	gtk_button_set_label (win->toggle_flip, _("Flip video"));
+	gtk_button_set_label (GTK_BUTTON (win->toggle_flip), _("Flip video"));
 	priv->clock_id = g_timeout_add (1000, (GSourceFunc) _pbw_clock_tick, win->status_clock);
 }
 
