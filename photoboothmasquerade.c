@@ -156,6 +156,7 @@ photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *mask_bin)
 		g_assert (lret == GST_PAD_LINK_OK);
 	}
 
+	mask->pixbuf_copy = gdk_pixbuf_copy (mask->pixbuf); // because GStreamer's gdkpixbufoverlay modifies the channel layout in-place
 	g_object_set (photo_overlay, "pixbuf", mask->pixbuf_copy,
 	                             "overlay-width", width,
 	                             "overlay-height", height,
@@ -241,7 +242,6 @@ photo_booth_mask_new (guint index, GtkFixed *fixed, const gchar *filename, gint 
 		return NULL;
 	}
 	mask->pixbuf_icon = gdk_pixbuf_new_from_file_at_size (filename, MASK_ICON_SIZE, MASK_ICON_SIZE, &error);
-	mask->pixbuf_copy = gdk_pixbuf_copy (mask->pixbuf); // because GStreamer's gdkpixbufoverlay modifies the channel layout in-place
 	mask->fixed = g_object_ref (fixed);
 	mask->offset_x = offset_x;
 	mask->offset_y = offset_y;

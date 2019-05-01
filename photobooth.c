@@ -133,6 +133,7 @@ struct _PhotoBoothPrivate
 	gchar              *masks_dir;
 	gchar              *masks_json;
 	GstElement         *mask_bin;
+	gboolean           enable_repositioning;
 
 	PhotoBoothLed     *led;
 };
@@ -147,6 +148,7 @@ struct _PhotoBoothPrivate
 #define DEFAULT_FLIP TRUE
 #define DEFAULT_HIDE_CURSOR TRUE
 #define DEFAULT_FACEDETECT FACEDETECT_DISABLED
+#define DEFAULT_ENABLE_REPOSITIONING TRUE
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
@@ -222,7 +224,6 @@ static gboolean photo_booth_preview_timedout (PhotoBooth *pb);
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
 void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win);
-static void photo_booth_prepare_print (PhotoBooth *pb);
 static void photo_booth_print (PhotoBooth *pb);
 static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintContext *context, gpointer user_data);
 static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data);
@@ -347,6 +348,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->masquerade = NULL;
 	priv->masks_dir = NULL;
 	priv->masks_json = NULL;
+	priv->enable_repositioning = DEFAULT_ENABLE_REPOSITIONING;
 	priv->led = photo_booth_led_new ();
 
 	G_stylesheet_filename = NULL;
@@ -2128,7 +2130,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 			}
 			photo_booth_window_set_spinner (priv->win, FALSE);
 
-			if (priv->do_masquerade) {
+			if (priv->do_masquerade && priv->enable_repositioning) {
 				photo_booth_change_state (pb, PB_STATE_MASQUERADE_PHOTO);
 				GST_DEBUG_OBJECT (pb, "waiting for user to place masks");
 			} else {
@@ -2161,7 +2163,7 @@ static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadPro
 		case PB_STATE_ASK_PRINT:
 		{
 			g_main_context_invoke (NULL, (GSourceFunc) photo_booth_process_photo_remove_elements, pb);
-			if (priv->do_masquerade) {
+			if (priv->do_masquerade && priv->enable_repositioning) {
 				GST_DEBUG_OBJECT (pb, "third buffer caught -> okay this is enough, remove processing elements and probe and open print dialoge");
 				g_main_context_invoke (NULL, (GSourceFunc) photo_booth_print, pb);
 				photo_booth_masquerade_clear_mask_bin (priv->masquerade, priv->mask_bin);
@@ -2264,11 +2266,11 @@ static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb)
 
 	gst_object_unref (tee);
 
-	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
-
 	if (priv->do_masquerade) {
 		photo_booth_masquerade_create_overlays (priv->masquerade, priv->mask_bin);
 	}
+
+	gst_element_set_state (pb->photo_bin, GST_STATE_PLAYING);
 
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_process_photo_plug_elements");
 
@@ -2378,9 +2380,9 @@ void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
 		}
 		photo_booth_print (pb);
 	}
-	if (priv->state == PB_STATE_MASQUERADE_PHOTO) {
+	if (priv->state == PB_STATE_MASQUERADE_PHOTO && priv->enable_repositioning) {
 		_play_event_sound (priv, ACK_SOUND);
-		photo_booth_prepare_print (pb);
+		photo_booth_push_photo_buffer (pb);
 	}
 }
 
@@ -2436,15 +2438,12 @@ void photo_booth_cancel (PhotoBooth *pb)
 	priv = photo_booth_get_instance_private (pb);
 	GST_INFO_OBJECT (pb, "cancelled in state %s", photo_booth_state_get_name (priv->state));
 	switch (priv->state) {
-		case PB_STATE_MASQUERADE_PHOTO:
-			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
-			gtk_widget_hide (GTK_WIDGET (priv->win->button_upload));
-			photo_booth_window_get_copies_hide (priv->win);
 		case PB_STATE_PROCESS_PHOTO:
 			photo_booth_process_photo_remove_elements (pb);
 		case PB_STATE_TAKING_PHOTO:
 		case PB_STATE_PRINTING:
 			break;
+		case PB_STATE_MASQUERADE_PHOTO:
 		case PB_STATE_ASK_PRINT:
 		{
 			gtk_widget_hide (GTK_WIDGET (priv->win->button_print));
