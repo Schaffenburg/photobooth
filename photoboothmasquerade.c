@@ -72,7 +72,8 @@ photo_booth_mask_finalize (GObject *object)
 	GST_DEBUG_OBJECT (mask, "finalize");
 	g_object_unref (mask->pixbuf);
 	g_object_unref (mask->pixbuf_icon);
-	g_object_unref (mask->pixbuf_copy);
+	if (mask->pixbuf_copy)
+		g_object_unref (mask->pixbuf_copy);
 	mask->imagew = mask->eventw = NULL;
 	G_OBJECT_CLASS (photo_booth_mask_parent_class)->finalize (object);
 }
@@ -384,13 +385,13 @@ void photo_booth_masquerade_set_primary_mask (PhotoBoothMasquerade *masq, guint 
 	photo_booth_masquerade_facedetect_update (masq, NULL);
 }
 
-static gint _pbm_sort_faces_by_xpos (const GValue *f1, const GValue *f2)
+static gint _pbm_sort_faces_by_xpos (gconstpointer f1, gconstpointer f2, G_GNUC_UNUSED gpointer user_data)
 {
 	guint x1, x2;
 	const GstStructure *face_struct;
-	face_struct = gst_value_get_structure (f1);
+	face_struct = gst_value_get_structure ((GValue*) f1);
 	gst_structure_get_uint (face_struct, "x", &x1);
-	face_struct = gst_value_get_structure (f2);
+	face_struct = gst_value_get_structure ((GValue*) f2);
 	gst_structure_get_uint (face_struct, "x", &x2);
 	return ( x1>x2 ? +1 : -1);
 }
@@ -428,7 +429,7 @@ void photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstSt
 		g_free (contents);
 	}
 
-	for (int i = 0; i < n_faces; i++)
+	for (guint i = 0; i < n_faces; i++)
 	{
 		const GValue *face = gst_value_list_get_value (faces, i);
 		sorted_faces = g_list_insert_sorted_with_data (sorted_faces, (GValue *) face, (GCompareDataFunc) _pbm_sort_faces_by_xpos, NULL);
@@ -471,7 +472,7 @@ photo_booth_masquerade_create_overlays (PhotoBoothMasquerade *masq, GstElement *
 }
 
 void
-photo_booth_masquerade_clear_mask_bin (PhotoBoothMasquerade *masq, GstElement *mask_bin)
+photo_booth_masquerade_clear_mask_bin (G_GNUC_UNUSED PhotoBoothMasquerade *masq, GstElement *mask_bin)
 {
 	GstIterator *iter = NULL;
 	GValue value = { 0 };
@@ -526,7 +527,7 @@ gboolean photo_booth_masquerade_press (GtkWidget *widget, GdkEventButton *event,
 	return TRUE;
 }
 
-gboolean photo_booth_masquerade_release (GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+gboolean photo_booth_masquerade_release (G_GNUC_UNUSED GtkWidget *widget, G_GNUC_UNUSED GdkEventButton *event, gpointer user_data)
 {
 	PhotoBoothMask *mask = PHOTO_BOOTH_MASK (user_data);
 

@@ -246,7 +246,7 @@ gint photo_booth_window_get_copies_hide (PhotoBoothWindow *win)
 	return copies;
 }
 
-gchar* photo_booth_window_format_copies_value (GtkScale *scale, gdouble value, gpointer user_data)
+gchar* photo_booth_window_format_copies_value (G_GNUC_UNUSED GtkScale *scale, gdouble value, G_GNUC_UNUSED gpointer user_data)
 {
 	int intval = (int) value;
 	if (intval == 1)

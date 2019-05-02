@@ -184,7 +184,7 @@ void photo_booth_cancel (PhotoBooth *pb);
 /* general private functions */
 const gchar* photo_booth_state_get_name (PhotoboothState state);
 static void photo_booth_change_state (PhotoBooth *pb, PhotoboothState state);
-static void photo_booth_quit_signal (PhotoBooth *pb);
+static gboolean photo_booth_quit_signal (gpointer);
 static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb);
 static void photo_booth_setup_window (PhotoBooth *pb);
 static gboolean photo_booth_video_widget_ready (PhotoBooth *pb);
@@ -205,7 +205,7 @@ static gboolean photo_booth_cam_close (CameraInfo **cam_info);
 static gboolean photo_booth_focus (CameraInfo *cam_info);
 static gboolean photo_booth_take_photo (PhotoBooth *pb);
 static void photo_booth_flush_pipe (int fd);
-static void photo_booth_capture_thread_func (PhotoBooth *pb);
+static gpointer photo_booth_capture_thread_func (gpointer user_data);
 static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, void *data);
 
 /* gstreamer functions */
@@ -216,6 +216,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 static GstPadProbeReturn photo_booth_drop_thumbnails (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
 static gboolean photo_booth_process_photo_plug_elements (PhotoBooth *pb);
+static gboolean photo_booth_push_photo_buffer (gpointer user_data);
 static GstFlowReturn photo_booth_catch_print_buffer (GstElement * appsink, gpointer user_data);
 static gboolean photo_booth_process_photo_remove_elements (PhotoBooth *pb);
 static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data);
@@ -224,7 +225,7 @@ static gboolean photo_booth_preview_timedout (PhotoBooth *pb);
 /* printing functions */
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb);
 void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win);
-static void photo_booth_print (PhotoBooth *pb);
+static gboolean photo_booth_print (gpointer user_data);
 static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintContext *context, gpointer user_data);
 static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data);
 static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperationResult result, gpointer user_data);
@@ -233,8 +234,8 @@ static void photo_booth_printing_error_dialog (PhotoBoothWindow *window, GError 
 /* upload functions */
 void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win);
 void photo_booth_button_publish_clicked (GtkButton *button, PhotoBoothWindow *win);
-static void photo_booth_public_post_thread_func (PhotoBooth *pb);
-static void photo_booth_linx_post_thread_func (PhotoBooth *pb);
+static gpointer photo_booth_public_post_thread_func (gpointer user_data);
+static gpointer photo_booth_linx_post_thread_func (gpointer user_data);
 static gboolean photo_booth_publish_timedout (PhotoBooth *pb);
 
 static void photo_booth_class_init (PhotoBoothClass *klass)
@@ -395,7 +396,7 @@ static void photo_booth_activate (GApplication *app)
 	photo_booth_setup_window (PHOTO_BOOTH (app));
 }
 
-static void photo_booth_open (GApplication *app, GFile **files, gint n_files, const gchar *hint)
+static void photo_booth_open (GApplication *app, G_GNUC_UNUSED GFile **files, G_GNUC_UNUSED gint n_files, G_GNUC_UNUSED const gchar *hint)
 {
 	GST_DEBUG_OBJECT (app, "photo_booth_open");
 	photo_booth_setup_window (PHOTO_BOOTH (app));
@@ -693,7 +694,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				{
 					gint count = atoi(g_match_info_fetch_named (match_info, "number"));
 					gchar *name = g_match_info_fetch_named (match_info, "filename");
-					if (count > priv->save_filename_count)
+					if (count > (int) priv->save_filename_count)
 						priv->save_filename_count = count;
 					GST_TRACE ("save_path_template found matching file %s (prefix %s, count %d, highest %i)", filename, name, count, priv->save_filename_count);
 					g_free (name);
@@ -715,20 +716,20 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 	}
 }
 
-static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, void *data)
+static void _gphoto_err(GPLogLevel level, const char *domain, const char *str, G_GNUC_UNUSED void *data)
 {
 	GST_DEBUG ("GPhoto %d, %s:%s", (int) level, domain, str);
 }
 
-static GstPadProbeReturn _gst_photo_probecb (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+static GstPadProbeReturn _gst_photo_probecb (GstPad * pad, G_GNUC_UNUSED GstPadProbeInfo * info, G_GNUC_UNUSED gpointer user_data)
 {
-	GST_DEBUG_OBJECT (pad, "drop photo");
+	GST_LOG_OBJECT (pad, "drop photo");
 	return GST_PAD_PROBE_DROP;
 }
 
-static GstPadProbeReturn _gst_video_probecb (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+static GstPadProbeReturn _gst_video_probecb (GstPad * pad, G_GNUC_UNUSED GstPadProbeInfo * info, G_GNUC_UNUSED gpointer user_data)
 {
-	GST_DEBUG_OBJECT (pad, "drop video");
+	GST_LOG_OBJECT (pad, "drop video");
 	return GST_PAD_PROBE_DROP;
 }
 
@@ -905,20 +906,23 @@ static void photo_booth_flush_pipe (int fd)
 	fcntl (fd, F_SETFL, flags ^ O_NONBLOCK);
 }
 
-static void photo_booth_quit_signal (PhotoBooth *pb)
+static gboolean photo_booth_quit_signal (gpointer user_data)
 {
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	GST_INFO ("caught SIGINT! exit...");
 	g_application_quit (G_APPLICATION (pb));
+	return FALSE;
 }
 
-static void photo_booth_window_destroyed_signal (PhotoBoothWindow *win, PhotoBooth *pb)
+static void photo_booth_window_destroyed_signal (G_GNUC_UNUSED PhotoBoothWindow *win, PhotoBooth *pb)
 {
 	GST_INFO ("main window closed! exit...");
 	g_application_quit (G_APPLICATION (pb));
 }
 
-static void photo_booth_capture_thread_func (PhotoBooth *pb)
+static gpointer photo_booth_capture_thread_func (gpointer user_data)
 {
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoboothCaptureThreadState state = CAPTURE_INIT;
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	CameraFile *gp_file = NULL;
@@ -1109,14 +1113,14 @@ static void photo_booth_capture_thread_func (PhotoBooth *pb)
 	}
 
 	g_assert_not_reached ();
-	return;
+	return NULL;
 
 	quit_thread:
 	{
 		if (gp_file)
 			gp_file_unref (gp_file);
 		GST_DEBUG ("stop running, exit thread, %d frames captured", captured_frames);
-		return;
+		return NULL;
 	}
 }
 
@@ -1368,7 +1372,7 @@ static gboolean photo_booth_setup_gstreamer (PhotoBooth *pb)
 	return TRUE;
 }
 
-static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, PhotoBooth *pb)
+static gboolean photo_booth_bus_callback (G_GNUC_UNUSED GstBus *bus, GstMessage *message, PhotoBooth *pb)
 {
 	GstObject *src = GST_MESSAGE_SRC (message);
 	PhotoBoothPrivate *priv;
@@ -1428,7 +1432,7 @@ static gboolean photo_booth_bus_callback (GstBus *bus, GstMessage *message, Phot
 			if (src == GST_OBJECT (priv->screensaver_playbin) && transition == GST_STATE_CHANGE_READY_TO_PAUSED)
 			{
 				GST_DEBUG ("screensaver_playbin GST_STATE_CHANGE_READY_TO_PAUSED last_play_pos=%" GST_TIME_FORMAT "", GST_TIME_ARGS (priv->last_play_pos));
-				if (priv->last_play_pos != GST_CLOCK_TIME_NONE)
+				if (priv->last_play_pos != (gint64) GST_CLOCK_TIME_NONE)
 					gst_element_seek (priv->screensaver_playbin, 1.0, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH, GST_SEEK_TYPE_SET, priv->last_play_pos, GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 			}
 			break;
@@ -1648,7 +1652,7 @@ static gboolean photo_booth_screensaver_stop (PhotoBooth *pb)
 	return FALSE;
 }
 
-static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+static GstPadProbeReturn photo_booth_screensaver_unplug_continue (GstPad * pad, G_GNUC_UNUSED GstPadProbeInfo * info, gpointer user_data)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
@@ -1716,7 +1720,7 @@ static gboolean photo_booth_capture_paused_cb (PhotoBooth *pb)
 	return FALSE;
 }
 
-void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, PhotoBoothWindow *win)
+void photo_booth_background_clicked (G_GNUC_UNUSED GtkWidget *widget, G_GNUC_UNUSED GdkEventButton *event, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
@@ -1751,6 +1755,7 @@ void photo_booth_background_clicked (GtkWidget *widget, GdkEventButton *event, P
 		}
 		case PB_STATE_ASK_PRINT:
 			g_timeout_add_seconds (15, (GSourceFunc) photo_booth_get_printer_status, pb);
+			__attribute__ ((fallthrough));
 		case PB_STATE_ASK_PUBLISH:
 		{
 // 			photo_booth_button_cancel_clicked (pb);
@@ -2034,8 +2039,9 @@ fail:
 	return FALSE;
 }
 
-static void photo_booth_push_photo_buffer (PhotoBooth *pb)
+static gboolean photo_booth_push_photo_buffer (gpointer user_data)
 {
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	GstElement *appsrc;
 	GstBuffer *buffer;
 	GstFlowReturn flowret;
@@ -2051,6 +2057,7 @@ static void photo_booth_push_photo_buffer (PhotoBooth *pb)
 	gst_object_unref (appsrc);
 
 	priv->drop_thumbnails = FALSE;
+	return FALSE;
 }
 
 static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
@@ -2088,7 +2095,7 @@ static gboolean photo_booth_snapshot_taken (PhotoBooth *pb)
 	return FALSE;
 }
 
-static GstPadProbeReturn photo_booth_drop_thumbnails (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+static GstPadProbeReturn photo_booth_drop_thumbnails (G_GNUC_UNUSED GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
@@ -2104,7 +2111,7 @@ static GstPadProbeReturn photo_booth_drop_thumbnails (GstPad * pad, GstPadProbeI
 	return GST_PAD_PROBE_PASS;
 }
 
-static GstPadProbeReturn photo_booth_catch_photo_buffer (GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
+static GstPadProbeReturn photo_booth_catch_photo_buffer (G_GNUC_UNUSED GstPad * pad, GstPadProbeInfo * info, gpointer user_data)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
@@ -2366,7 +2373,7 @@ static void photo_booth_ask_for_publishing (PhotoBooth *pb)
 	}
 }
 
-void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
+void photo_booth_button_print_clicked (G_GNUC_UNUSED GtkButton *button, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv;
@@ -2386,7 +2393,7 @@ void photo_booth_button_print_clicked (GtkButton *button, PhotoBoothWindow *win)
 	}
 }
 
-void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win)
+void photo_booth_button_upload_clicked (G_GNUC_UNUSED GtkButton *button, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv;
@@ -2402,7 +2409,7 @@ void photo_booth_button_upload_clicked (GtkButton *button, PhotoBoothWindow *win
 	}
 }
 
-void photo_booth_button_publish_clicked (GtkButton *button, PhotoBoothWindow *win)
+void photo_booth_button_publish_clicked (G_GNUC_UNUSED GtkButton *button, PhotoBoothWindow *win)
 {
 	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
 	PhotoBoothPrivate *priv;
@@ -2472,8 +2479,9 @@ void photo_booth_copies_value_changed (GtkRange *range, PhotoBoothWindow *win)
 
 #define ALWAYS_PRINT_DIALOG 1
 
-static void photo_booth_print (PhotoBooth *pb)
+static gboolean photo_booth_print (gpointer user_data)
 {
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (pb->pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "photo_booth_photo_print");
@@ -2549,9 +2557,10 @@ static void photo_booth_print (PhotoBooth *pb)
 	}
 	else
 		gtk_label_set_text (priv->win->status, _("Can't print, out of paper!"));
+	return FALSE;
 }
 
-static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintContext *context, gpointer user_data)
+static void photo_booth_begin_print (GtkPrintOperation *operation, G_GNUC_UNUSED GtkPrintContext *context, gpointer user_data)
 {
 	PhotoBooth *pb;
 	PhotoBoothPrivate *priv;
@@ -2564,7 +2573,7 @@ static void photo_booth_begin_print (GtkPrintOperation *operation, GtkPrintConte
 	gtk_print_operation_set_n_pages (operation, priv->print_copies);
 }
 
-static void photo_booth_draw_page (GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data)
+static void photo_booth_draw_page (G_GNUC_UNUSED GtkPrintOperation *operation, GtkPrintContext *context, int page_nr, gpointer user_data)
 {
 	PhotoBooth *pb;
 	PhotoBoothPrivate *priv;
@@ -2641,14 +2650,15 @@ static void photo_booth_print_done (GtkPrintOperation *operation, GtkPrintOperat
 
 size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
 {
-	int i;
+	size_t i;
 	for (i = 0; i < size*nmemb; i++)
 		g_string_append_c((GString *)buf, ((gchar *)ptr)[i]);
 	return i;
 }
 
-void photo_booth_linx_post_thread_func (PhotoBooth *pb)
+static gpointer photo_booth_linx_post_thread_func (gpointer user_data)
 {
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
 	gchar *header;
 	const gchar *filename, *put_uri;
@@ -2719,11 +2729,12 @@ void photo_booth_linx_post_thread_func (PhotoBooth *pb)
 	if (priv->do_linx_upload == UPLOAD_ASK) {
 		photo_booth_ask_for_publishing (pb);
 	}
-	return;
+	return NULL;
 }
 
-void photo_booth_public_post_thread_func (PhotoBooth *pb)
+static gpointer photo_booth_public_post_thread_func (gpointer user_data)
 {
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
 	PhotoBoothPrivate *priv;
 	CURLcode res;
 	CURL *curl;
@@ -2839,7 +2850,7 @@ out:
 	curl_easy_cleanup (curl);
 	photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
 	photo_booth_window_set_spinner (priv->win, FALSE);
-	return;
+	return NULL;
 }
 
 static gboolean photo_booth_preview_timedout (PhotoBooth *pb)
