@@ -122,6 +122,37 @@ void strip_on() {
   strip.show();
 }
 
+void ring_idle() {
+  ring_clear();
+  uint8_t brightness_lut[32]  = {
+      0,   1,   2,   3,   4,   5,   7,   9,
+     12,  15,  18,  22,  27,  32,  38,  44,
+     51,  58,  67,  76,  86,  96, 108, 120,
+    134, 148, 163, 180, 197, 216, 235, 255};
+  uint8_t start_led = 0;
+  const uint8_t NUM_ROUNDS = 20;
+
+  while (!cancel)
+  {
+    for (uint8_t i = 0; i < NUM_ROUNDS; i++)
+    {
+      for (e = 0; e < RING_LEDS; e++)
+      {
+        int pos = start_led + e;
+        if (pos >= RING_LEDS)
+          pos %= RING_LEDS;
+        float bright_off = (brightness_lut [e] - (e > 0 ? brightness_lut [e-1] : 0)) * (float) i / (float) NUM_ROUNDS;
+        uint8_t brightness = brightness_lut [e] - round(bright_off);
+        ring.setPixelColor(pos, strip.Color(0, brightness, 0));
+      }
+      ring.show();
+      cancelable_delay (10);
+    }
+    start_led++;
+  }
+  return;
+}
+
 void focususer() {
   ring_clear();
   uint8_t x;
@@ -286,6 +317,11 @@ void flash_white() {
 void cmdparse() {
   incomingByte = Serial.read();
   Serial.write("R");
+  Serial.write(incomingByte);
+  Serial.flush();
+  if (incomingByte == 'i') {
+    ring_idle();
+  }
   if (incomingByte == 'f') {
     flash_color();
   }
