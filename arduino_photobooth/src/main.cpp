@@ -26,7 +26,29 @@ uint32_t white = strip.Color(32, 32, 32);
 
 uint32_t bright = strip.Color(255, 255, 255);
 
+void cancelable_delay(unsigned long duration)
+{
+  unsigned long time = millis();
+  while (!cancel)
+  {
+    if (millis()-time > duration)
+    {
+      return;
+    }
+    if (Serial.available() > 0)
+    {
+      cancel = true;
+    }
+  }
+}
+
+void cancelled() {
+  Serial.write("cancelled\r\n");
+  cancel = false;
+}
+
 void setup() {
+  delay(5);
   strip.begin();
   strip.show(); // Initialize all pixels to 'off'
 
@@ -42,26 +64,21 @@ void setup() {
   rainbow_lut [4] = strip.Color(0, 0, 128); // blue
   rainbow_lut [5] = strip.Color(32, 0, 56); // purple
 
-/*
-  rainbow_lut [0] = strip.Color(255, 0, 0); // red
-  rainbow_lut [1] = strip.Color(255, 80, 0); // orange
-  rainbow_lut [2] = strip.Color(128, 128, 0); // yellow
-  rainbow_lut [3] = strip.Color(0, 255, 0); // green
-  rainbow_lut [4] = strip.Color(0, 0, 255); // blue
-  rainbow_lut [5] = strip.Color(64, 0, 110); // purple
-*/
-  delay(5);
+  delay(1);
+
+  Serial.flush();
+
   Serial.write("Photobooth-LED ready\r\n");
 }
 
-void stripclear() {
+void strip_clear() {
   for (e = 0; e < STRIP_LEDS; e++) {
     strip.setPixelColor(e, black);
   }
   strip.show();
 }
 
-void ringclear() {
+void ring_clear() {
   for (e = 0; e < RING_LEDS; e++) {
     ring.setPixelColor(e, black);
   }
@@ -80,7 +97,7 @@ void stripincrement() {
   }
 }
 
-void stripon() {
+void strip_on() {
   for (e = 0; e < STRIP_LEDS; e++) {
     if (e % 5 == 0) {
       strip.setPixelColor(e, purple);
@@ -106,7 +123,7 @@ void stripon() {
 }
 
 void focususer() {
-  ringclear();
+  ring_clear();
   uint8_t x;
   uint8_t delay_per_led = (1000 / RING_LEDS) - 2;
   float leds_per_second = (float) RING_LEDS / (float) COUNTDOWN;
@@ -123,19 +140,19 @@ void focususer() {
   {
     uint8_t start_sector_pos = (uint8_t) ((float)x*leds_per_second);
     uint8_t end_sector_pos = (uint8_t) (((float)x+1.0)*leds_per_second);
-    
+
     for (e = start_sector_pos; e < end_sector_pos; e++)
     {
       ring.setPixelColor(e, rainbow_lut [x]);
     }
     ring.show();
-    
+
     for (e = 0; e < RING_LEDS; e++)
     {
       prev_color = ring.getPixelColor(e);
       ring.setPixelColor(e, bright);
       ring.show();
-      cancelableDelay (delay_per_led);
+      cancelable_delay (delay_per_led);
       ring.setPixelColor(e, prev_color);
       ring.show();
       if (cancel)
@@ -148,20 +165,15 @@ do_cancel:
   cancelled();
 }
 
-void cancelled() {
-  Serial.write("cancelled\r\n");
-  cancel = false; 
-}
-
 void strip_print(uint8_t copies) {
-  stripclear();
+  strip_clear();
   uint8_t print_lut[6][3] = {
     {  0, 200, 255}, // cyan
     {255,   0, 220}, // magenta
     {255, 255,   0}, // yellow
     {255, 255, 255} // white
   };
-  
+
   for (uint8_t i = 1; i <= copies; i++)
   {
     Serial.print("\r\ncopy:");
@@ -176,7 +188,7 @@ void strip_print(uint8_t copies) {
 
       uint8_t start_intensity, end_intensity;
       int8_t increment;
-  
+
       if (pass % 2)
       {
         start_intensity = 0;
@@ -211,7 +223,7 @@ void strip_print(uint8_t copies) {
           strip.setPixelColor(e, color);
         }
         strip.show();
-        cancelableDelay(9);
+        cancelable_delay(9);
         if (cancel)
           goto do_cancel;
       }
@@ -241,7 +253,7 @@ void flash_color() {
       ring.setPixelColor(e, rainbow_lut [(e+i) % 6]);
     }
     ring.show();
-    cancelableDelay(50);
+    cancelable_delay(50);
     if (cancel)
       goto do_cancel;
   }
@@ -281,10 +293,10 @@ void cmdparse() {
     focususer();
   }
   if (incomingByte == 'o') {
-    stripon();
+    strip_on();
   }
   if (incomingByte == 'b') {
-    ringclear();
+    ring_clear();
   }
   if (incomingByte == 't') {
     ring.setPixelColor(0, ring.Color(10,10,10));
@@ -296,28 +308,12 @@ void cmdparse() {
     strip_print(copies);
   }
   if (incomingByte == 'B') {
-    stripclear();
+    strip_clear();
   }
 }
 
 void loop() {
   if (Serial.available() > 0) {
     cmdparse();
-  }
-}
-
-void cancelableDelay(long duration)
-{
-  long time = millis();
-  while (!cancel)
-  {
-    if (millis()-time > duration)
-    {
-      return;
-    }
-    if (Serial.available() > 0)
-    {
-      cancel = true;
-    }
   }
 }
