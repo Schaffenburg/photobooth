@@ -164,7 +164,7 @@
                 </style>
               </object>
               <packing>
-                <property name="x">1200</property>
+                <property name="x">1000</property>
                 <property name="y">64</property>
               </packing>
             </child>
