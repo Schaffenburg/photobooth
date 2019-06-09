@@ -174,7 +174,7 @@
                 <property name="height_request">80</property>
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
-                <property name="wrap-width">1</property>
+                <property name="wrap_width">1</property>
                 <signal name="changed" handler="photo_booth_masq_changed" swapped="no"/>
                 <style>
                   <class name="combo_masquerade"/>
@@ -195,6 +195,18 @@
                 <property name="vexpand">True</property>
                 <property name="stock">gtk-missing-image</property>
               </object>
+            </child>
+            <child>
+              <object class="GtkProgressBar" id="upload_progress">
+                <property name="width_request">300</property>
+                <property name="height_request">24</property>
+                <property name="visible">False</property>
+                <property name="can_focus">False</property>
+              </object>
+              <packing>
+                <property name="x">970</property>
+                <property name="y">950</property>
+              </packing>
             </child>
             <style>
               <class name="transparentbg"/>

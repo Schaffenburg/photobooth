@@ -119,6 +119,7 @@ struct _PhotoBoothPrivate
 	gchar             *imgur_description;
 	GThread           *publish_thread;
 	GMutex             upload_mutex;
+	gboolean           curl_cancelled;
 	gchar             *twitter_bridge_host;
 	guint              twitter_bridge_port;
 
@@ -2439,6 +2440,7 @@ void photo_booth_button_cancel_clicked (GtkButton *button, PhotoBoothWindow *win
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (pb);
 	GST_DEBUG_OBJECT (button, "photo_booth_button_cancel_clicked");
+	priv->curl_cancelled = TRUE;
 	_play_event_sound (photo_booth_get_instance_private (pb), ACK_SOUND);
 	if (priv->do_save_photos < SAVE_ALL) {
 		photo_booth_delete_file (pb);
@@ -2663,6 +2665,21 @@ size_t _curl_write_func (void *ptr, size_t size, size_t nmemb, void *buf)
 	return i;
 }
 
+int _curl_progress (void *user_data, G_GNUC_UNUSED curl_off_t dltotal, G_GNUC_UNUSED curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
+{
+	PhotoBooth *pb = PHOTO_BOOTH (user_data);
+	PhotoBoothPrivate *priv;
+	priv = photo_booth_get_instance_private (pb);
+	if (!priv->curl_cancelled)
+	{
+		photo_booth_window_upload_progress_show (priv->win, ultotal, ulnow);
+		GST_LOG ("ultotal=%ld ulnow=%ld", ultotal, ulnow);
+		return CURLE_OK;
+	}
+	photo_booth_window_upload_progress_show (priv->win, -1, 0);
+	return -1;
+}
+
 static gpointer photo_booth_linx_post_thread_func (gpointer user_data)
 {
 	PhotoBooth *pb = PHOTO_BOOTH (user_data);
@@ -2682,6 +2699,7 @@ static gpointer photo_booth_linx_post_thread_func (gpointer user_data)
 	g_assert (curl);
 
 	priv = photo_booth_get_instance_private (pb);
+	priv->curl_cancelled = FALSE;
 
 	g_mutex_lock (&priv->upload_mutex);
 	filename = g_strdup_printf (priv->save_path_template, priv->save_filename_count);
@@ -2711,11 +2729,16 @@ static gpointer photo_booth_linx_post_thread_func (gpointer user_data)
 	curl_easy_setopt (curl, CURLOPT_PUT, 1L);
 	curl_easy_setopt (curl, CURLOPT_UPLOAD, 1L);
 	curl_easy_setopt (curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t) file_info.st_size);
+	curl_easy_setopt (curl, CURLOPT_CONNECTTIMEOUT, 5);
 
 	curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, _curl_write_func);
 	curl_easy_setopt (curl, CURLOPT_WRITEDATA, buf);
 
-	curl_easy_setopt(curl, CURLOPT_READDATA, src_file);
+	curl_easy_setopt (curl, CURLOPT_READDATA, src_file);
+
+	curl_easy_setopt (curl, CURLOPT_XFERINFOFUNCTION, _curl_progress);
+	curl_easy_setopt (curl, CURLOPT_XFERINFODATA, pb);
+	curl_easy_setopt (curl, CURLOPT_NOPROGRESS, 0L);
 
 	res = curl_easy_perform (curl);
 	if (res != CURLE_OK)
@@ -2736,6 +2759,7 @@ static gpointer photo_booth_linx_post_thread_func (gpointer user_data)
 	if (priv->do_linx_upload == UPLOAD_ASK) {
 		photo_booth_ask_for_publishing (pb);
 	}
+	photo_booth_window_upload_progress_show (priv->win, -1, 0);
 	return NULL;
 }
 
@@ -2786,6 +2810,10 @@ static gpointer photo_booth_public_post_thread_func (gpointer user_data)
 		curl_easy_setopt (curl, CURLOPT_HTTPPOST, post);
 		curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, _curl_write_func);
 		curl_easy_setopt (curl, CURLOPT_WRITEDATA, buf);
+		curl_easy_setopt (curl, CURLOPT_CONNECTTIMEOUT, 5);
+		curl_easy_setopt (curl, CURLOPT_XFERINFOFUNCTION, _curl_progress);
+		curl_easy_setopt (curl, CURLOPT_NOPROGRESS, 0L);
+		curl_easy_setopt (curl, CURLOPT_XFERINFODATA, pb);
 		res = curl_easy_perform (curl);
 		if (res != CURLE_OK)
 		{
@@ -2857,6 +2885,7 @@ out:
 	curl_easy_cleanup (curl);
 	photo_booth_change_state (pb, PB_STATE_PREVIEW_COOLDOWN);
 	photo_booth_window_set_spinner (priv->win, FALSE);
+	photo_booth_window_upload_progress_show (priv->win, -1, 0);
 	return NULL;
 }
 

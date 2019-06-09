@@ -28,6 +28,7 @@ struct _PhotoBoothWindowPrivate
 	GtkWidget *spinner, *statusbar;
 	GtkLabel *countdown_label;
 	GtkScale *copies;
+	GtkProgressBar *upload_progress;
 	gint countdown;
 	guint clock_id;
 };
@@ -68,6 +69,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, spinner);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, countdown_label);
 	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, copies);
+	gtk_widget_class_bind_template_child_private (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, upload_progress);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, fixed);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, image);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_cancel);
@@ -268,6 +270,21 @@ void photo_booth_window_init_masq_combobox (PhotoBoothWindow *win, GtkListStore 
 	renderer = gtk_cell_renderer_pixbuf_new();
 	gtk_cell_layout_pack_start (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, FALSE);
 	gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, "pixbuf", COL_ICON, NULL);
+}
+
+void photo_booth_window_upload_progress_show (PhotoBoothWindow *win, gint total, gint current)
+{
+	PhotoBoothWindowPrivate *priv;
+	priv = photo_booth_window_get_instance_private (win);
+	
+	if (total > 0) {
+		gdouble f = (gdouble) current / (gdouble) total;
+		gtk_progress_bar_set_fraction (priv->upload_progress, f);
+		GST_LOG ("set progess %f", f);
+		gtk_widget_show (GTK_WIDGET (priv->upload_progress));
+	} else {
+		gtk_widget_hide (GTK_WIDGET (priv->upload_progress));
+	}
 }
 
 PhotoBoothWindow * photo_booth_window_new (PhotoBooth *pb)
