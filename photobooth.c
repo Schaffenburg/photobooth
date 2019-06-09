@@ -75,6 +75,7 @@ struct _PhotoBoothPrivate
 	guint              save_filename_count;
 
 	gchar             *printer_backend;
+	gchar             *gutenprint_path;
 	gint               print_copies_min, print_copies_default, print_copies_max, print_copies;
 	gint               print_dpi, print_width, print_height;
 	gdouble            print_x_offset, print_y_offset;
@@ -148,7 +149,8 @@ struct _PhotoBoothPrivate
 #define DEFAULT_FLIP TRUE
 #define DEFAULT_HIDE_CURSOR TRUE
 #define DEFAULT_FACEDETECT FACEDETECT_DISABLED
-#define DEFAULT_ENABLE_REPOSITIONING TRUE
+#define DEFAULT_ENABLE_REPOSITIONING FALSE
+#define DEFAULT_GUTENPRINT_PATH  "/usr/lib/cups/backend/gutenprint53+usb"
 #define PRINT_DPI 346
 #define PRINT_WIDTH 2076
 #define PRINT_HEIGHT 1384
@@ -312,6 +314,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->cam_icc_profile = NULL;
 	priv->cam_keep_files = FALSE;
 	priv->printer_backend = NULL;
+	priv->gutenprint_path = DEFAULT_GUTENPRINT_PATH;
 	priv->printer_settings = NULL;
 	priv->overlay_image = NULL;
 	priv->countdown_audio_uri = NULL;
@@ -438,6 +441,7 @@ static void photo_booth_dispose (GObject *object)
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (PHOTO_BOOTH (object));
 	g_free (priv->printer_backend);
+	g_free (priv->gutenprint_path);
 	if (priv->printer_settings != NULL)
 		g_object_unref (priv->printer_settings);
 	g_free (priv->countdown_audio_uri);
@@ -621,6 +625,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 		if (g_key_file_has_group (gkf, "printer"))
 		{
 			READ_STR_INI_KEY (priv->printer_backend, gkf, "printer", "backend");
+			READ_STR_INI_KEY (priv->gutenprint_path, gkf, "printer", "gutenprint_path");
 			READ_INT_INI_KEY (priv->print_copies_min, gkf, "printer", "copies_min");
 			READ_INT_INI_KEY (priv->print_copies_max, gkf, "printer", "copies_max");
 			READ_INT_INI_KEY (priv->print_copies_default, gkf, "printer", "copies_default");
@@ -1194,6 +1199,8 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 			return FALSE;
 		}
 		pad = gst_element_get_static_pad (video_filter, "src");
+		priv->enable_facedetect = FACEDETECT_DISABLED;
+		gtk_widget_hide (GTK_WIDGET (priv->win->combo_masquerade));
 	}
 
 	ghost = gst_ghost_pad_new ("src", pad);
@@ -1825,7 +1832,7 @@ static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
 	gchar *label_string;
 	gchar *backend_environment = g_strdup_printf ("BACKEND=%s", priv->printer_backend);
-	gchar *argv[] = { "/usr/lib/cups/backend/gutenprint52+usb", "-m", NULL };
+	gchar *argv[] = { priv->gutenprint_path, "-m", NULL };
 	gchar *envp[] = { backend_environment, NULL };
 	gchar *output = NULL;
 	GError *error = NULL;
