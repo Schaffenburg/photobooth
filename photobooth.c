@@ -161,11 +161,11 @@ struct _PhotoBoothPrivate
 #define IMGUR_UPLOAD_URI "https://api.imgur.com/3/upload"
 #define DEFAULT_TWITTER_BRIDGE_HOST NULL
 #define DEFAULT_TWITTER_BRIDGE_PORT 0
-#define DEFAULT_QRCODE TRUE
+#define DEFAULT_QRCODE FALSE
 #define DEFAULT_QRCODE_X -1
 #define DEFAULT_QRCODE_Y -1
 #define DEFAULT_QRCODE_SCALE 4.0
-#define DEFAULT_QRCODE_BASE_URI "https://schaffenburg.org/"
+#define DEFAULT_QRCODE_BASE_URI NULL
 #define DEFAULT_LINX_UPLOAD UPLOAD_NEVER
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION)
@@ -663,6 +663,7 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_STR_INI_KEY (priv->imgur_description, gkf, "upload", "imgur_description");
 			READ_STR_INI_KEY (priv->twitter_bridge_host, gkf, "upload", "twitter_bridge_host");
 			READ_INT_INI_KEY (priv->twitter_bridge_port, gkf, "upload", "twitter_bridge_port");
+			priv->do_qrcode = !!priv->qrcode_base_uri;
 		}
 		if (g_key_file_has_group (gkf, "masks"))
 		{
