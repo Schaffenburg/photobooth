@@ -4,21 +4,21 @@
 import sys
 
 prints_list = []
+log = None
 
-CUPSLOGFILE = "/var/log/cups/page_log"
-f = open(CUPSLOGFILE, 'r')
-for line in f.readlines():
+if len(sys.argv) > 1:
+  f = open(sys.argv[1], 'r')
+  log = f.readlines()
+else:
+	log = sys.stdin
 
-#for line in sys.stdin:
+for line in log:
   cols = line.split(' ')
   rawdatetime = cols[3][1:]
-  copies = int(cols[5])
+  copies = int(cols[6])
   job = cols[10]
   #print "rawdatetime", rawdatetime, "copies", copies, "job", job
-  if copies == 1:
-    prints_list.append((rawdatetime, copies, job))
-  elif prints_list and prints_list[-1][2] == job:
-    prints_list[-1] = (rawdatetime, copies, job)
+  prints_list.append((rawdatetime, copies, job))
 
 MAX_COPIES = 6
 copies_statistics = {}
@@ -43,5 +43,3 @@ for x, copies in copies_statistics.iteritems():
 print "----------------------"
 print str(total).rjust(4), "\tAbzüge gesamt"
 print str(jobs).rjust(4), "\tJobs"
-
-
