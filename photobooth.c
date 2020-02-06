@@ -315,7 +315,7 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->cam_icc_profile = NULL;
 	priv->cam_keep_files = FALSE;
 	priv->printer_backend = NULL;
-	priv->gutenprint_path = DEFAULT_GUTENPRINT_PATH;
+	priv->gutenprint_path = g_strdup (DEFAULT_GUTENPRINT_PATH);
 	priv->printer_settings = NULL;
 	priv->overlay_image = NULL;
 	priv->countdown_audio_uri = NULL;
@@ -1183,7 +1183,7 @@ static GstElement *build_video_bin (PhotoBooth *pb)
 		{
 			GST_INFO_OBJECT (priv->masquerade, "facedetect plugin will be used!");
 			if (priv->enable_facedetect == FACEDETECT_ENABLED) {
-				gtk_combo_box_set_active (priv->win->combo_masquerade, 1);;
+				gtk_combo_box_set_active (priv->win->combo_masquerade, 1);
 			}
 			pad = gst_element_get_static_pad (detect_convert, "src");
 		} else {
