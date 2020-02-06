@@ -41,6 +41,7 @@ struct _PhotoBoothWindow
 	GtkLabel *status_clock, *status, *status_printer;
 	GtkToggleButton *toggle_flip;
 	GtkComboBox *combo_masquerade;
+	GtkComboBox *combo_overlay;
 };
 
 struct _PhotoBoothWindowClass
@@ -59,6 +60,9 @@ void                    photo_booth_window_set_copies_show  (PhotoBoothWindow *w
 gint                    photo_booth_window_get_copies_hide  (PhotoBoothWindow *win);
 void 					photo_booth_window_upload_progress_show (PhotoBoothWindow *win, gint total, gint current);
 void                    photo_booth_window_init_masq_combobox (PhotoBoothWindow *win, GtkListStore *store);
+void                    photo_booth_window_init_overlay_combobox (PhotoBoothWindow *win, GtkListStore *store);
+
+enum {COL_INDEX, COL_TEXT, COL_ICON, NUM_COLS};
 
 G_END_DECLS
 

@@ -154,8 +154,8 @@
             <child>
               <object class="GtkToggleButton" id="toggle_flip">
                 <property name="label" translatable="yes">flip</property>
-                <property name="width_request">160</property>
-                <property name="height_request">80</property>
+                <property name="width_request">80</property>
+                <property name="height_request">40</property>
                 <property name="can_focus">True</property>
                 <property name="receives_default">True</property>
                 <signal name="toggled" handler="photo_booth_flip_toggled" object="PhotoBoothWindow" swapped="no"/>
@@ -164,7 +164,7 @@
                 </style>
               </object>
               <packing>
-                <property name="x">1000</property>
+                <property name="x">90</property>
                 <property name="y">64</property>
               </packing>
             </child>
@@ -182,6 +182,23 @@
               </object>
               <packing>
                 <property name="x">176</property>
+                <property name="y">64</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBox" id="combo_overlay">
+                <property name="width_request">160</property>
+                <property name="height_request">80</property>
+                <property name="visible">False</property>
+                <property name="can_focus">False</property>
+                <property name="wrap_width">1</property>
+                <signal name="changed" handler="photo_booth_overlay_changed" swapped="no"/>
+                <style>
+                  <class name="combo_masquerade"/>
+                </style>
+              </object>
+              <packing>
+                <property name="x">1024</property>
                 <property name="y">64</property>
               </packing>
             </child>

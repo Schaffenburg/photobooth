@@ -26,6 +26,7 @@ src = [
   'photoboothwin.c',
   'photoboothled.c',
   'photoboothmasquerade.c',
+  'photoboothoverlay.c',
   'focus.c',
   photoboothresources
 ]

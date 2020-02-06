@@ -18,6 +18,7 @@
 
 #include <gtk/gtk.h>
 #include "photobooth.h"
+#include "photoboothwin.h"
 
 G_BEGIN_DECLS
 
@@ -43,14 +44,11 @@ struct _PhotoBoothMasqueradeClass
 
 GType                 photo_booth_masquerade_get_type          (void);
 PhotoBoothMasquerade *photo_booth_masquerade_new               (void);
-void                  photo_booth_masquerade_init_masks        (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor);
+void                  photo_booth_masquerade_init_masks        (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gint print_width);
 void                  photo_booth_masquerade_facedetect_update (PhotoBoothMasquerade *masq, GstStructure *structure);
 void                  photo_booth_masquerade_create_overlays   (PhotoBoothMasquerade *masq, GstElement *mask_bin);
 void                  photo_booth_masquerade_clear_mask_bin    (PhotoBoothMasquerade *masq, GstElement *mask_bin);
 void                  photo_booth_masquerade_set_primary_mask  (PhotoBoothMasquerade *masq, guint index);
-
-enum {COL_INDEX, COL_TEXT, COL_ICON, NUM_COLS};
-#define MASK_ICON_SIZE 64
 
 G_END_DECLS
 

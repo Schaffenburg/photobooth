@@ -19,6 +19,7 @@
 #include "photobooth.h"
 #include "photoboothwin.h"
 #include "photoboothmasquerade.h"
+#include "photoboothoverlay.h"
 
 typedef struct _PhotoBoothWindowPrivate PhotoBoothWindowPrivate;
 
@@ -78,6 +79,7 @@ static void photo_booth_window_class_init (PhotoBoothWindowClass *klass)
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, button_publish);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, toggle_flip);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, combo_masquerade);
+	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, combo_overlay);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_clock);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status);
 	gtk_widget_class_bind_template_child (GTK_WIDGET_CLASS (klass), PhotoBoothWindow, status_printer);
@@ -270,6 +272,22 @@ void photo_booth_window_init_masq_combobox (PhotoBoothWindow *win, GtkListStore 
 	renderer = gtk_cell_renderer_pixbuf_new();
 	gtk_cell_layout_pack_start (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, FALSE);
 	gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT(win->combo_masquerade), renderer, "pixbuf", COL_ICON, NULL);
+}
+
+void photo_booth_window_init_overlay_combobox (PhotoBoothWindow *win, GtkListStore *store)
+{
+	gtk_combo_box_set_model (win->combo_overlay, GTK_TREE_MODEL (store));
+	GtkCellRenderer *renderer;
+
+	GST_INFO ("init overlay combobox");
+
+	renderer = gtk_cell_renderer_text_new();
+	gtk_cell_layout_pack_start (GTK_CELL_LAYOUT(win->combo_overlay), renderer, TRUE);
+	gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT(win->combo_overlay), renderer, "text", COL_TEXT, NULL);
+
+	renderer = gtk_cell_renderer_pixbuf_new();
+	gtk_cell_layout_pack_start (GTK_CELL_LAYOUT(win->combo_overlay), renderer, FALSE);
+	gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT(win->combo_overlay), renderer, "pixbuf", COL_ICON, NULL);
 }
 
 void photo_booth_window_upload_progress_show (PhotoBoothWindow *win, gint total, gint current)

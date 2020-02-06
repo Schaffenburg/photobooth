@@ -37,6 +37,7 @@
 #include "photoboothwin.h"
 #include "photoboothled.h"
 #include "photoboothmasquerade.h"
+#include "photoboothoverlay.h"
 
 #include <glib/gstdio.h>
 #include <gio/gio.h>
@@ -56,7 +57,6 @@ struct _PhotoBoothPrivate
 {
 	PhotoboothState    state;
 	PhotoBoothWindow  *win;
-	GstVideoRectangle  video_size;
 
 	GThread           *capture_thread;
 	gulong             video_block_id, photo_block_id, sink_block_id;
@@ -65,9 +65,12 @@ struct _PhotoBoothPrivate
 	guint32            countdown;
 	gint               preview_timeout;
 	gulong             preview_timeout_id;
-	gchar             *overlay_image;
 	gboolean           do_flip;
 	gboolean           hide_cursor;
+
+	PhotoBoothOverlays *overlays;
+	gchar              *overlay_dir;
+	gchar              *overlay_json;
 
 	save_t             do_save_photos;
 	gchar             *save_path_template;
@@ -317,7 +320,9 @@ static void photo_booth_init (PhotoBooth *pb)
 	priv->printer_backend = NULL;
 	priv->gutenprint_path = g_strdup (DEFAULT_GUTENPRINT_PATH);
 	priv->printer_settings = NULL;
-	priv->overlay_image = NULL;
+	priv->overlays = NULL;
+	priv->overlay_dir = NULL;
+	priv->overlay_json = NULL;
 	priv->countdown_audio_uri = NULL;
 	priv->ack_sound = NULL;
 	priv->error_sound = NULL;
@@ -441,6 +446,10 @@ static void photo_booth_dispose (GObject *object)
 {
 	PhotoBoothPrivate *priv;
 	priv = photo_booth_get_instance_private (PHOTO_BOOTH (object));
+	if (priv->overlays)
+		g_object_unref (priv->overlays);
+	g_free (priv->overlay_dir);
+	g_free (priv->overlay_json);
 	g_free (priv->printer_backend);
 	g_free (priv->gutenprint_path);
 	if (priv->printer_settings != NULL)
@@ -451,7 +460,6 @@ static void photo_booth_dispose (GObject *object)
 	g_free (priv->screensaver_uri);
 	g_free (priv->print_icc_profile);
 	g_free (priv->cam_icc_profile);
-	g_free (priv->overlay_image);
 	g_free (priv->save_path_template);
 	g_free (priv->linx_put_uri);
 	g_free (priv->linx_api_key);
@@ -561,7 +569,6 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 			READ_STR_INI_KEY (G_stylesheet_filename, gkf, "general", "stylesheet");
 			READ_INT_INI_KEY (priv->countdown, gkf, "general", "countdown");
 			READ_INT_INI_KEY (priv->preview_timeout, gkf, "general", "preview_timeout");
-			READ_STR_INI_KEY (priv->overlay_image, gkf, "general", "overlay_image");
 			READ_INT_INI_KEY (priv->screensaver_timeout, gkf, "general", "screensaver_timeout");
 			READ_STR_INI_KEY (screensaverfile, gkf, "general", "screensaver_file");
 			READ_INT_INI_KEY (priv->enable_facedetect, gkf, "general", "facedetection");
@@ -600,6 +607,11 @@ void photo_booth_load_settings (PhotoBooth *pb, const gchar *filename)
 				}
 				g_free (save_path_template);
 			}
+		}
+		if (g_key_file_has_group (gkf, "overlays"))
+		{
+			READ_STR_INI_KEY (priv->overlay_dir, gkf, "overlays", "directory");
+			READ_STR_INI_KEY (priv->overlay_json, gkf, "overlays", "list");
 		}
 		if (g_key_file_has_group (gkf, "sounds"))
 		{
@@ -1239,8 +1251,6 @@ static GstElement *build_photo_bin (PhotoBooth *pb)
 
 	photo_overlay = gst_element_factory_make ("gdkpixbufoverlay", "photo-overlay");
 	g_assert (photo_overlay);
-	if (priv->overlay_image)
-		g_object_set (photo_overlay, "location", priv->overlay_image, NULL);
 	g_object_set (photo_overlay, "overlay-width", priv->print_width, NULL);
 	g_object_set (photo_overlay, "overlay-height", priv->print_height, NULL);
 
@@ -1482,64 +1492,36 @@ static gboolean photo_booth_bus_callback (G_GNUC_UNUSED GstBus *bus, GstMessage 
 static gboolean photo_booth_video_widget_ready (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv;
-	GtkRequisition size;
-	GtkAllocation size2;
-	GstVideoRectangle s1, s2, rect;
+	gint width, height;
 	GstElement *element;
 	GstCaps *caps;
-	GdkPixbuf *overlay_pixbuf;
-	GError *error = NULL;
 
 	priv = photo_booth_get_instance_private (pb);
-	gtk_widget_get_preferred_size (priv->win->gtkgstwidget, NULL, &size);
-	gtk_widget_get_allocated_size (priv->win->gtkgstwidget, &size2, NULL);
-	s1.w = size.width;
-	s1.h = size.height;
-	s2.w = size2.width;
-	s2.h = size2.height;
-	gst_video_sink_center_rect (s1, s2, &rect, TRUE);
 
-	GST_DEBUG ("gtksink widget is ready. preferred dimensions: %dx%d allocated %dx%d", size.width, size.height, size2.width, size2.height);
+	GST_DEBUG ("initialize overlays");
+	priv->overlays = photo_booth_overlays_new (priv->win, priv->overlay_dir, priv->overlay_json);
+	photo_booth_window_init_overlay_combobox (priv->win, priv->overlays->store);
+
+	width = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (priv->win->fixed), "video-width"));
+	height = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (priv->win->fixed), "video-height"));
 
 	element = gst_bin_get_by_name (GST_BIN (pb->video_bin), "video-capsfilter");
-	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, rect.w, "height", G_TYPE_INT, rect.h, NULL);
+	caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, NULL);
 	g_object_set (G_OBJECT (element), "caps", caps, NULL);
 	gst_caps_unref (caps);
 	gst_object_unref (element);
 
-	GST_DEBUG ("gtksink widget is ready. output dimensions: %dx%d", rect.w, rect.h);
-	priv->video_size = rect;
+	// photo_booth_overlays_set_index (priv->overlays, 0, pb->photo_bin);
+	GST_DEBUG_OBJECT (priv->win->fixed, "gtksink widget is ready. output dimensions: %dx%d", width, height);
 
-	overlay_pixbuf = gdk_pixbuf_new_from_file_at_size (priv->overlay_image, rect.w, rect.h, &error);
-	if (error) {
-		GST_ERROR ("%s\n", error->message);
-		return FALSE;
+	gtk_combo_box_set_active (priv->win->combo_overlay, 0);
+	if (photo_booth_overlays_get_count (priv->overlays) > 1) {
+		gtk_widget_show (GTK_WIDGET (priv->win->combo_overlay));
 	}
-	if (gdk_pixbuf_get_width (overlay_pixbuf) != rect.w || gdk_pixbuf_get_height (overlay_pixbuf) != rect.h)
-	{
-		GST_DEBUG ("overlay_image original dimensions %dx%d. aspect mismatch -> we need to scale!", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf));
-		overlay_pixbuf = gdk_pixbuf_scale_simple (overlay_pixbuf, rect.w, rect.h, GDK_INTERP_BILINEAR);
-	}
-	rect.x = (size2.width-gdk_pixbuf_get_width (overlay_pixbuf))/2;
-	rect.y = (size2.height-gdk_pixbuf_get_height (overlay_pixbuf))/2;
-	GST_DEBUG ("overlay_image's pixbuf dimensions %dx%d pos@%d,%d", gdk_pixbuf_get_width (overlay_pixbuf), gdk_pixbuf_get_height (overlay_pixbuf), rect.x, rect.y);
-	gtk_image_set_from_pixbuf (priv->win->image, overlay_pixbuf);
-	gtk_fixed_move (priv->win->fixed, GTK_WIDGET (priv->win->image), rect.x, 0);
-	g_object_unref (overlay_pixbuf);
 
 	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE && priv->masquerade == NULL) {
-		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-y", GINT_TO_POINTER (rect.y));
-		GValue off = G_VALUE_INIT;
-		g_value_init (&off, G_TYPE_INT);
-		gtk_container_child_get_property (GTK_CONTAINER (priv->win->fixed), GTK_WIDGET (priv->win->image), "x", &off);
-		gint screen_offset_x = g_value_get_int (&off);
-		g_object_set_data (G_OBJECT (priv->win->fixed), "screen-offset-x", GINT_TO_POINTER (screen_offset_x));
-		g_object_set_data (G_OBJECT (priv->win->fixed), "video-size", (gpointer) &priv->video_size);
-		gdouble xfactor = (gdouble) priv->video_size.w / priv->print_width;
-		gdouble yfactor = (gdouble) priv->video_size.h / priv->print_height;
-		GST_DEBUG ("initialize masquerade with container %" GST_PTR_FORMAT " print xfactor=%f yfactor=%f", priv->win->fixed, xfactor, yfactor);
 		priv->masquerade = photo_booth_masquerade_new ();
-		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json, xfactor);
+		photo_booth_masquerade_init_masks (priv->masquerade, priv->win->fixed, priv->masks_dir, priv->masks_json, priv->print_width);
 		photo_booth_window_init_masq_combobox (priv->win, priv->masquerade->store);
 	}
 
@@ -1622,6 +1604,9 @@ static gboolean photo_booth_preview_ready (PhotoBooth *pb)
 	if (priv->hide_cursor)
 		photo_booth_window_hide_cursor (priv->win);
 	gtk_widget_show (GTK_WIDGET (priv->win->toggle_flip));
+	if (photo_booth_overlays_get_count (priv->overlays) > 1) {
+		gtk_widget_show (GTK_WIDGET (priv->win->combo_overlay));
+	}
 	if (priv->enable_facedetect >= FACEDETECT_ENABLEABLE) {
 		gtk_widget_show (GTK_WIDGET (priv->win->combo_masquerade));
 	}
@@ -1828,6 +1813,21 @@ void photo_booth_masq_changed (GtkComboBox *widget, PhotoBoothWindow *win)
 	_restart_screensaver_timeout (pb);
 }
 
+void photo_booth_overlay_changed (GtkComboBox *widget, PhotoBoothWindow *win)
+{
+	PhotoBooth *pb = PHOTO_BOOTH_FROM_WINDOW (win);
+	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
+	GtkTreeIter iter;
+	gint index = 0;
+	gboolean active = gtk_combo_box_get_active_iter (widget, &iter);
+	if (active) {
+		gtk_tree_model_get (gtk_combo_box_get_model (widget), &iter, COL_INDEX, &index, -1);
+		GST_INFO ("overlay changed to index %i", index);
+		photo_booth_overlays_set_index (priv->overlays, index, pb->photo_bin);
+	}
+	_restart_screensaver_timeout (pb);
+}
+
 static gboolean photo_booth_get_printer_status (PhotoBooth *pb)
 {
 	PhotoBoothPrivate *priv = photo_booth_get_instance_private (pb);
@@ -1908,6 +1908,7 @@ static void photo_booth_snapshot_start (PhotoBooth *pb)
 	photo_booth_change_state (pb, PB_STATE_COUNTDOWN);
 	photo_booth_window_start_countdown (priv->win, priv->countdown);
 	gtk_widget_hide (GTK_WIDGET (priv->win->toggle_flip));
+	gtk_widget_hide (GTK_WIDGET (priv->win->combo_overlay));
 	gtk_widget_hide (GTK_WIDGET (priv->win->combo_masquerade));
 
 	if (priv->countdown > 1)

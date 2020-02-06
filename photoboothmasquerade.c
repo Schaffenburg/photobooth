@@ -55,6 +55,8 @@ G_DEFINE_TYPE (PhotoBoothMask, photo_booth_mask, G_TYPE_OBJECT);
 GST_DEBUG_CATEGORY_STATIC (photo_booth_masquerade_debug);
 #define GST_CAT_DEFAULT photo_booth_masquerade_debug
 
+#define MASK_ICON_SIZE 64
+
 static void photo_booth_mask_connect_events (PhotoBoothMask *mask, gpointer press, gpointer release, gpointer motion);
 static void photo_booth_mask_create_overlay (PhotoBoothMask *mask, GstElement *mask_bin);
 static void photo_booth_mask_show (PhotoBoothMask *mask, const GValue *face, GstStructure *structure);
@@ -297,7 +299,7 @@ static void photo_booth_masquerade_init (PhotoBoothMasquerade *masq)
 	priv->primary_mask_index = 0;
 }
 
-void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gdouble print_scaling_factor)
+void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fixed, const gchar *dir, gchar *list_json, gint print_width)
 {
 	JsonParser *parser;
 	JsonNode *root;
@@ -334,7 +336,8 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 	{
 		const gchar *filename, *title;
 		gchar *maskpath;
-		gint offset_x, offset_y;
+		gint offset_x, offset_y, width;
+		gdouble print_scaling_factor;
 		PhotoBoothMask *mask;
 
 		if (!json_reader_read_element (reader, i))
@@ -356,6 +359,8 @@ void photo_booth_masquerade_init_masks (PhotoBoothMasquerade *masq, GtkFixed *fi
 		title = json_reader_get_string_value (reader);
 		json_reader_end_element (reader);
 		maskpath = g_strconcat (dir, filename, NULL);
+		width = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (fixed), "video-width"));
+		print_scaling_factor = (gdouble) width / print_width;
 		mask = photo_booth_mask_new (index, fixed, maskpath, offset_x, offset_y, print_scaling_factor);
 		if (mask) {
 			priv->masks = g_list_append (priv->masks, mask);
