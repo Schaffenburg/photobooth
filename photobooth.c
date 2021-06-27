@@ -958,7 +958,7 @@ static gpointer photo_booth_capture_thread_func (gpointer user_data)
 			{
 				if (photo_booth_cam_init (&pb->cam_info))
 				{
-					static volatile gsize cam_configured = 0;
+					static gsize cam_configured = 0;
 					GST_INFO ("photo_booth_cam_inited @ %p", (void *)pb->cam_info);
 					if (g_once_init_enter (&cam_configured))
 					{
