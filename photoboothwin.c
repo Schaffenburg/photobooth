@@ -20,6 +20,8 @@
 #include "photoboothwin.h"
 #include "photoboothmasquerade.h"
 
+#define _(key) (G_strings_table && g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
+
 typedef struct _PhotoBoothWindowPrivate PhotoBoothWindowPrivate;
 
 struct _PhotoBoothWindowPrivate

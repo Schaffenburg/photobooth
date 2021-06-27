@@ -45,6 +45,8 @@
 
 #define photo_booth_parent_class parent_class
 
+#define _(key) (G_strings_table && g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
+
 typedef enum { NONE, ACK_SOUND, ERROR_SOUND } sound_t;
 typedef enum { SAVE_NEVER, SAVE_ASK, SAVE_PRINTED, SAVE_ALL } save_t;
 typedef enum { UPLOAD_NEVER, UPLOAD_ASK, UPLOAD_PRINTED, UPLOAD_ALL } upload_t;
@@ -167,6 +169,10 @@ struct _PhotoBoothPrivate
 #define DEFAULT_QRCODE_SCALE 4.0
 #define DEFAULT_QRCODE_BASE_URI NULL
 #define DEFAULT_LINX_UPLOAD UPLOAD_NEVER
+
+gchar *G_template_filename;
+gchar *G_stylesheet_filename;
+GHashTable *G_strings_table;
 
 G_DEFINE_TYPE_WITH_PRIVATE (PhotoBooth, photo_booth, GTK_TYPE_APPLICATION)
 

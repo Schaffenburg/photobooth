@@ -91,11 +91,11 @@ typedef enum
 	PB_STATE_SCREENSAVER
 } PhotoboothState;
 
-gchar *G_template_filename;
-gchar *G_stylesheet_filename;
-GHashTable *G_strings_table;
+extern gchar *G_template_filename;
+extern gchar *G_stylesheet_filename;
+extern GHashTable *G_strings_table;
+
 #undef _
-#define _(key) (G_strings_table && g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
 #define PHOTO_MASKOVERLAY_NAME_TEMPLATE "photo-maskoverlay-%02d"
 
 #define PHOTO_BOOTH_TYPE                (photo_booth_get_type ())

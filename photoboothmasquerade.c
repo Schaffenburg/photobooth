@@ -17,6 +17,8 @@
 #include "photobooth.h"
 #include "photoboothmasquerade.h"
 
+#define _(key) (G_strings_table && g_hash_table_contains (G_strings_table, key) ? g_hash_table_lookup (G_strings_table, key) : key)
+
 #define TYPE_PHOTO_BOOTH_MASK (photo_booth_mask_get_type())
 #define PHOTO_BOOTH_MASK(obj) \
 (G_TYPE_CHECK_INSTANCE_CAST((obj),TYPE_PHOTO_BOOTH_MASK,\
